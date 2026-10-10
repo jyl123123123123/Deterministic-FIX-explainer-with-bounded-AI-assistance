@@ -17,6 +17,9 @@ from .tokenizer import TokenizationResult, tokenize
 __version__ = "0.1.0"
 
 __all__ = [
+	"GeminiExplanationProvider",
+	"build_ai_catalog",
+	"TemplateExplanationProvider",
 	"FixField",
 	"FieldSpec",
 	"FixSpecification",
@@ -39,3 +42,6 @@ __all__ = [
 	"validate_integrity",
 	"validate_message_schema",
 ]
+from .template import TemplateExplanationProvider
+
+from .ai import GeminiExplanationProvider, build_ai_catalog
