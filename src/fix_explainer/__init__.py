@@ -4,6 +4,7 @@ from .models import FixField, ValidationError
 from .message import ParsedFixMessage, split_message
 from .integrity import validate_body_length, validate_checksum, validate_integrity
 from .spec import FieldSpec, FixSpecification, MessageSpec, load_orchestra
+from .schema import validate_message_schema
 from .tokenizer import TokenizationResult, tokenize
 
 __version__ = "0.1.0"
@@ -23,4 +24,5 @@ __all__ = [
 	"validate_body_length",
 	"validate_checksum",
 	"validate_integrity",
+	"validate_message_schema",
 ]
