@@ -113,12 +113,12 @@ export default function ChatPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, typing]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    alive.current = true;
+    return () => {
       alive.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const saveSettings = () => {
     const key = keyDraft.trim();
