@@ -1,6 +1,7 @@
 """Bounded explanation built only from deterministic FIX facts."""
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from typing import Any, Protocol
 
 from .message import ParsedFixMessage
@@ -42,14 +43,25 @@ def build_explanation_context(
             }
         )
 
+    sources = [
+        {"tag": field.tag, "ordinal": field.ordinal}
+        for field in message.header if field.tag == 35
+    ][:1]
+    for fact in known_facts:
+        fact["evidence_fields"] = deepcopy(sources)
+
     for field in message.body:
         field_fact: dict[str, object] = {
             "tag": field.tag,
             "value": field.value,
+            "ordinal": field.ordinal,
             "evidence_tags": [field.tag],
         }
         if specification is not None and field.tag in specification.fields:
-            field_fact["field_name"] = specification.fields[field.tag].name
+            definition = specification.fields[field.tag]
+            field_fact["field_name"] = definition.name
+            if field.value in definition.enum_values:
+                field_fact["enum_name"] = definition.enum_values[field.value]
         known_facts.append({"claim": "Field is present.", "field": field_fact})
 
     return {
@@ -86,9 +98,25 @@ def explain_with_provider(
 ) -> dict[str, Any]:
     """Ask an optional provider to summarize facts while preserving deterministic output."""
     context = build_explanation_context(message, specification, additional_errors)
+    try:
+        summary = provider.summarize(deepcopy(context))
+        if not isinstance(summary, str) or not summary.strip():
+            raise ValueError("Provider returned an empty or non-string summary")
+    except Exception as error:
+        fallback = explain_deterministically(message, specification, additional_errors)
+        return {
+            "deterministic": context,
+            "provider_summary": fallback["summary"],
+            "fallback_used": True,
+            # Exception text may contain sensitive values; expose only its type.
+            "fallback_reason": f"Explanation failed ({type(error).__name__}).",
+            "fallback": fallback,
+        }
     return {
         "deterministic": context,
-        "provider_summary": provider.summarize(context),
+        "provider_summary": summary,
+        "fallback_used": False,
+        "fallback_reason": None,
     }
 
 
