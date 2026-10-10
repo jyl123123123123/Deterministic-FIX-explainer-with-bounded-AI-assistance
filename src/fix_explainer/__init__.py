@@ -6,6 +6,12 @@ from .integrity import validate_body_length, validate_checksum, validate_integri
 from .spec import FieldSpec, FixSpecification, MessageSpec, load_orchestra
 from .schema import validate_message_schema
 from .serialization import message_to_dict, message_to_json
+from .explainer import (
+	BoundedExplanationProvider,
+	build_explanation_context,
+	explain_deterministically,
+	explain_with_provider,
+)
 from .tokenizer import TokenizationResult, tokenize
 
 __version__ = "0.1.0"
@@ -14,6 +20,7 @@ __all__ = [
 	"FixField",
 	"FieldSpec",
 	"FixSpecification",
+	"BoundedExplanationProvider",
 	"MessageSpec",
 	"ParsedFixMessage",
 	"TokenizationResult",
@@ -24,6 +31,9 @@ __all__ = [
 	"load_orchestra",
 	"message_to_dict",
 	"message_to_json",
+	"build_explanation_context",
+	"explain_deterministically",
+	"explain_with_provider",
 	"validate_body_length",
 	"validate_checksum",
 	"validate_integrity",
