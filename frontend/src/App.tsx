@@ -14,6 +14,13 @@ interface BuilderState {
   price: string;
 }
 
+type ExplanationMode = 'template' | 'ai';
+
+interface ApiExplanation {
+  provider_summary: string;
+  fallback_used: boolean;
+}
+
 function formatUtcTimestamp(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return (
@@ -27,6 +34,10 @@ export default function App() {
   const [input, setInput] = useState('');
   const [result, setResult] = useState<ParseResult | null>(null);
   const [explanation, setExplanation] = useState<Explanation | null>(null);
+  const [explanationMode, setExplanationMode] = useState<ExplanationMode>('template');
+  const [apiExplanation, setApiExplanation] = useState<ApiExplanation | null>(null);
+  const [apiLoading, setApiLoading] = useState(false);
+  const [apiError, setApiError] = useState('');
   const [error, setError] = useState('');
   const [builder, setBuilder] = useState<BuilderState>({
     symbol: 'AAPL',
@@ -37,11 +48,12 @@ export default function App() {
   });
   const [builderError, setBuilderError] = useState('');
 
-  const analyze = (message: string) => {
+  const analyze = async (message: string) => {
     if (!message.trim()) {
       setError('Please paste a FIX message first.');
       setResult(null);
       setExplanation(null);
+      setApiExplanation(null);
       return;
     }
     try {
@@ -53,6 +65,31 @@ export default function App() {
       setResult(null);
       setExplanation(null);
       setError(e instanceof Error ? e.message : 'Failed to parse the message.');
+      setApiExplanation(null);
+      return;
+    }
+
+    setApiError('');
+    setApiLoading(true);
+    try {
+      const response = await fetch('/api/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, mode: explanationMode }),
+      });
+      if (!response.ok) {
+        throw new Error(`Explanation API returned HTTP ${response.status}.`);
+      }
+      const data = (await response.json()) as { explanation?: ApiExplanation };
+      if (!data.explanation?.provider_summary) {
+        throw new Error('Explanation API returned no summary.');
+      }
+      setApiExplanation(data.explanation);
+    } catch (e) {
+      setApiExplanation(null);
+      setApiError(e instanceof Error ? e.message : 'Explanation server is unavailable.');
+    } finally {
+      setApiLoading(false);
     }
   };
 
@@ -143,6 +180,18 @@ export default function App() {
             <button className="btn btn-primary" onClick={() => analyze(input)}>
               Analyze Message
             </button>
+            <label className="form-field explanation-mode">
+              <span>Server explanation</span>
+              <select
+                value={explanationMode}
+                onChange={(e) => setExplanationMode(e.target.value as ExplanationMode)}
+              >
+                <option value="template">Local template</option>
+                <option value="ai">Gemini API</option>
+              </select>
+            </label>
+            {apiLoading && <p className="hint">Requesting the explanation server...</p>}
+            {apiError && <p className="error">{apiError}</p>}
             {error && <p className="error">{error}</p>}
             <p className="hint">
               Supports pipe (|), caret (^) and SOH (\u0001) delimiters — detected automatically.
@@ -237,6 +286,21 @@ export default function App() {
                         <li key={d}>{d}</li>
                       ))}
                     </ul>
+                  </div>
+                </section>
+              )}
+              {apiExplanation && (
+                <section>
+                  <h2 className="section-title">Server Explanation</h2>
+                  <div className="card explanation-card">
+                    <p className="explanation-text">{apiExplanation.provider_summary}</p>
+                    <p className="hint">
+                      {apiExplanation.fallback_used
+                        ? 'The server used its deterministic fallback.'
+                        : explanationMode === 'ai'
+                          ? 'This summary was arranged by Gemini from approved facts.'
+                          : 'This summary was rendered by the local template provider.'}
+                    </p>
                   </div>
                 </section>
               )}
