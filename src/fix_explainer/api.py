@@ -1,9 +1,10 @@
 """Local HTTP API for browser clients; Gemini credentials stay server-side."""
 
 from pathlib import Path
+import asyncio
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -15,6 +16,8 @@ from .serialization import message_to_dict
 from .spec import load_orchestra
 from .template import TemplateExplanationProvider
 from .message import split_message
+from .streaming import StreamConfig, StreamSimulator
+from .trading import TradingDataService
 
 
 class ExplainRequest(BaseModel):
@@ -38,11 +41,54 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
+trading_service = TradingDataService()
+stream_simulator = StreamSimulator(trading_service.ingest)
 
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/trading/snapshot")
+def trading_snapshot() -> dict:
+    return trading_service.snapshot()
+
+
+@app.post("/api/trading/start")
+def start_trading_stream(
+    count: int = Query(default=1500, ge=1000, le=2000),
+    rate: int = Query(default=25, ge=10, le=100),
+    seed: int = Query(default=20261010),
+) -> dict:
+    try:
+        run = stream_simulator.start(StreamConfig(count=count, rate=rate, seed=seed))
+    except (RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return run.snapshot()
+
+
+@app.get("/api/trading/runs/{run_id}")
+def trading_run_status(run_id: str) -> dict:
+    try:
+        return stream_simulator.status(run_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.websocket("/api/trading/stream")
+async def trading_stream(websocket: WebSocket) -> None:
+    await websocket.accept()
+    last_processed = -1
+    try:
+        while True:
+            snapshot = trading_service.snapshot()
+            if snapshot["processed"] != last_processed:
+                await websocket.send_json(snapshot)
+                last_processed = snapshot["processed"]
+            await asyncio.sleep(0.1)
+    except WebSocketDisconnect:
+        return
 
 
 @app.post("/api/explain", response_model=ExplainResponse)

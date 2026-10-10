@@ -13,6 +13,20 @@ from .explainer import (
 	explain_with_provider,
 )
 from .tokenizer import TokenizationResult, tokenize
+from .events import (
+	EventSource,
+	EventType,
+	FixTag,
+	OrderStatus,
+	Side,
+	TradingEvent,
+)
+from .synthetic import SyntheticMessage, generate_synthetic_messages
+from .batch import BatchItem, BatchResult, parse_batch
+from .storage import SQLiteTradingRepository
+from .correlation import CorrelatedOrder, CorrelationResult, OrderCorrelator
+from .streaming import StreamConfig, StreamRun, StreamSimulator
+from .trading import TradingDataService, normalize_fix_message
 
 __version__ = "0.1.0"
 
@@ -41,6 +55,26 @@ __all__ = [
 	"validate_checksum",
 	"validate_integrity",
 	"validate_message_schema",
+	"EventSource",
+	"EventType",
+	"FixTag",
+	"OrderStatus",
+	"Side",
+	"TradingEvent",
+	"SyntheticMessage",
+	"generate_synthetic_messages",
+	"BatchItem",
+	"BatchResult",
+	"parse_batch",
+	"SQLiteTradingRepository",
+	"CorrelatedOrder",
+	"CorrelationResult",
+	"OrderCorrelator",
+	"StreamConfig",
+	"StreamRun",
+	"StreamSimulator",
+	"TradingDataService",
+	"normalize_fix_message",
 ]
 from .template import TemplateExplanationProvider
 
