@@ -97,6 +97,7 @@ def explain_with_provider(
     additional_errors: Sequence[ValidationError] = (),
 ) -> dict[str, Any]:
     """Ask an optional provider to summarize facts while preserving deterministic output."""
+    additional_errors = tuple(additional_errors)
     context = build_explanation_context(message, specification, additional_errors)
     try:
         summary = provider.summarize(deepcopy(context))
@@ -106,7 +107,7 @@ def explain_with_provider(
         fallback = explain_deterministically(message, specification, additional_errors)
         return {
             "deterministic": context,
-            "provider_summary": fallback["summary"],
+            "provider_summary": _safe_fallback_summary(context),
             "fallback_used": True,
             # Exception text may contain sensitive values; expose only its type.
             "fallback_reason": f"Explanation failed ({type(error).__name__}).",
@@ -128,3 +129,24 @@ def _error_to_dict(error: ValidationError) -> dict[str, object]:
         "tag": error.tag,
         "ordinal": error.ordinal,
     }
+
+
+def _safe_fallback_summary(context: Mapping[str, Any]) -> str:
+    """A cited display of deterministic findings, never raw message/diagnostic text.
+
+    The unchanged original deterministic explanation is retained under fallback.
+    This display deliberately reveals no business values, even on provider failure.
+    """
+    lines = ["Deterministic fallback."]
+    errors = context["validation_errors"]
+    if not errors:
+        lines.append("No validation findings were supplied. [validation_errors]")
+    for index, error in enumerate(errors):
+        severity = error["severity"] if error["severity"] in ("error", "warning") else "unspecified"
+        lines.append(f"Validation finding recorded ({severity}); see the deterministic record. "
+                     f"[validation_errors[{index}]]")
+    for index, unknown in enumerate(context["unknowns"]):
+        safe = (unknown if unknown == "Business outcome and causality are not determined by this message alone."
+                else "Additional uncertainty recorded; text withheld.")
+        lines.append(f"{safe} [unknowns[{index}]]")
+    return "\n".join(lines)

@@ -1,4 +1,9 @@
 """Run from repository root: PYTHONPATH=src python3 examples/template_demo.py"""
+import sys
+
+if sys.version_info < (3, 11):
+    raise SystemExit("Python 3.11+ is required. Run this example with your Python 3.11+ virtual environment.")
+
 import json
 from pathlib import Path
 from fix_explainer import (

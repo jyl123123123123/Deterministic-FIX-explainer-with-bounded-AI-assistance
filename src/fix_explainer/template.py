@@ -57,7 +57,7 @@ class TemplateExplanationProvider:
                 continue
             # Only the two established claim shapes are accepted; never interpret enums.
             claim = fact.get("claim", "")
-            if fact.get("evidence_tags") == [35] and (
+            if 35 in self.allowed_tags and fact.get("evidence_tags") == [35] and (
                 claim.startswith("FIX MsgType is ") or
                 claim.startswith("Message purpose is ")
             ):

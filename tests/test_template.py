@@ -46,7 +46,7 @@ def test_provider_exception_and_mutation_fall_back_with_findings():
     assert 'SECRET' not in result['fallback_reason']
     assert result['fallback']['validation_errors'] == result['deterministic']['validation_errors']
     assert result['fallback']['validation_errors'][0]['code'] == 'BAD'
-    assert 'has validation errors' in result['provider_summary']
+    assert '[validation_errors[0]]' in result['provider_summary']
 
 
 def test_legacy_context_marks_ambiguous_source_and_allowlist_can_only_narrow():

@@ -1,39 +1,172 @@
-# B 模块：本地模板解释
+# B Integration Guide: Bounded FIX Explanations
 
-Python 3.11+，无 LLM、API key 或运行时第三方依赖。保留 A 的 tokenizer、解析器、规范和校验逻辑。
+The explanation layer reuses the existing parser, specification loader, and validators. It provides a local template provider and optional Gemini assistance through the existing `BoundedExplanationProvider` protocol and `explain_with_provider` function.
 
-从本目录运行：
+## Requirements and setup
+
+Python 3.11 or later is required. No third-party runtime dependencies are needed; pytest is needed for tests.
+
+Run from the repository root:
 
 ```sh
-PYTHONPATH=src python3 examples/template_demo.py
-PYTHONPATH=src python3 -m pytest
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[test]'
+python -m pytest
 ```
 
-pytest 未安装时，可在自己的虚拟环境中安装 `python3 -m pip install -e '.[test]'`。
+If your Python 3.11+ executable has a different name, substitute it in the first command. Both demos check the Python version before importing the package.
 
-C 可直接复用 examples/template_demo.py 的调用：
+## Run the demos
+
+```sh
+# Local templates: no network or credentials.
+python examples/gemini_demo.py
+
+# Mock Gemini: exercises sanitization, request construction, and output validation.
+python examples/gemini_demo.py --mock
+
+# The original template example prints the complete deterministic result.
+# Use only in a trusted local environment: that result is not redacted.
+python examples/template_demo.py
+```
+
+Without installing the package, use `PYTHONPATH=src` with a Python 3.11+ interpreter.
+
+### Real Gemini requests
+
+Create an API key in [Google AI Studio](https://aistudio.google.com/api-keys). Choose a model ID available to your account that supports structured JSON output. There is no hardcoded default model.
+
+In zsh, enter credentials without placing the key in command history:
+
+```sh
+read -s 'GEMINI_API_KEY?Gemini API key: '
+export GEMINI_API_KEY
+printf '\n'
+read 'GEMINI_MODEL?Gemini model ID: '
+export GEMINI_MODEL
+
+python examples/gemini_demo.py --ai
+
+# Optional: read a single message from a file.
+python examples/gemini_demo.py --ai --file /absolute/path/message.fix
+
+# Clear the key after use.
+unset GEMINI_API_KEY
+```
+
+Environment variables apply to the current terminal and its child processes. `.env` files are ignored by Git but are not loaded automatically. Keep keys on the backend, never in frontend code or committed files.
+
+The demo converts readable pipe delimiters to SOH before integrity checks. It loads only the repository's example specification subset; it does not establish support for all FIX messages or versions. Replace that subset with the appropriate trusted specification for your application.
+
+## Interface integration
 
 ```python
-from fix_explainer import TemplateExplanationProvider, explain_with_provider
-result = explain_with_provider(message, TemplateExplanationProvider(), specification, errors)
+from fix_explainer import (
+    GeminiExplanationProvider,
+    TemplateExplanationProvider,
+    explain_with_provider,
+)
+
+# message: output from the existing split_message function.
+# specification: output from the existing load_orchestra function.
+# errors: additional integrity/schema findings.
+provider = TemplateExplanationProvider()
+# To enable Gemini instead:
+# provider = GeminiExplanationProvider(timeout=20)
+
+result = explain_with_provider(message, provider, specification, errors)
 summary = result['provider_summary']
 findings = result['deterministic']['validation_errors']
 fallback_used = result['fallback_used']
-reason = result['fallback_reason']
+fallback_reason = result['fallback_reason']
 ```
 
-message 来自 A 的 split_message；errors 为额外完整性/规范检查结果，不要重复传 message.errors，接口已经包含它们。provider 不主动执行校验，不能从没有 findings 推导交易成功。只有规范实际提供的字段名、枚举标签和业务名称会用于解释。
+See `examples/gemini_demo.py` for a complete parsing and validation pipeline. Do not include `message.errors` in `errors`: the interface already adds parser findings. Providers do not run validation themselves. An empty findings list does not establish a successful business outcome.
 
-## 展示与隐私边界
+Render `provider_summary` as plain text. Display deterministic findings separately in a controlled panel. Show fallback status explicitly; mock or fallback output must not be presented as a successful Gemini response.
 
-provider_summary 是筛选后的英文纯文本，UI 应作为文本渲染，避免 HTML 注入。默认允许 tag 35、38、40、44、54、55、59、150、39、151、14、6。敏感标识符只提示值已隐藏；其他字段默认不展示。自定义 allowed_tags 只能缩小默认集合。发送方/接收方位于 Header，本来就不进入 A 的 body facts。账户、订单、参与方与登录标识等即使出现在 Body 也隐藏。字段名与枚举名来自输入规范，不由模板猜测；数量、价格、证券代码仍会显示，默认策略不等于对任意业务数据的完全匿名化。
+## Disclosure policy
 
-确定性 context、fallback 保留原始诊断和数据，**并非脱敏输出**。C 应在受控的校验面板展示这些数据，不能把整个 result 当成可公开日志或可发给未来 LLM 的 payload。诊断自由文本与未知自由文本可能包含敏感值，因此摘要仅引用记录位置并隐藏自由文本；内置固定 unknown 文案可以原样显示。异常原因只显示异常类型，不显示可能带敏感数据的异常消息。
+### Local templates
 
-## 引用精度
+The default allowed tags are 35, 38, 40, 44, 54, 55, 59, 150, 39, 151, 14, and 6. Custom `allowed_tags` can only narrow this policy, including removal of tag 35 message-type and purpose claims.
 
-原 context 只有 evidence_tags，重复 tag 无法区分。本次向 Body fact 添加 A 已有的 ordinal，向消息类型/目的 fact 添加 evidence_fields。`[tag=55; ordinal=7]` 表示原消息第 8 个 token（ordinal 从 0 开始，包含 malformed token 的位置）。C 可以用 message.fields 中 ordinal 找到字段。它不是 repeating-group 路径，也不验证重复组结构。旧 context 没有 ordinal 时明确标记 occurrence unavailable，不能精确定位重复字段。
+Sensitive identifiers, including account, order, communication-party, participant, and login identifiers, have their values hidden. Other unlisted fields are omitted. Header sender/target fields are not included in the parser's body facts. Allowed business quantities, prices, and symbols can be displayed by the local template provider.
 
-`[validation_errors[i]]` 引用原始校验记录；缺失字段并不存在于消息中，tag 引用只是受影响的 tag，应以该校验记录为依据，不能当成字段存在证据。`[unknowns[i]]` 引用未知项。每个事实引用还保留 context 索引。
+Field names, enum labels, and message purposes are used only when provided by the deterministic context. No FIX meanings are inferred from a hardcoded explanation dictionary.
 
-异常、空字符串或非字符串返回会调用现有 explain_deterministically；fallback_used 与 fallback_reason 标明回退，fallback 保留全部问题。第三方 provider 收到深拷贝，修改副本不能覆盖 deterministic。第一版没有模型语义校验；模板只复述已提供事实，不推导成交、因果或枚举意义。
+### Gemini input
+
+`build_ai_catalog(context)` creates a new disclosure-safe catalog rather than forwarding the original context. It retains source indexes and available tag/ordinal references without mutating the input.
+
+The AI policy additionally hides Symbol values and nonnumeric field values. Allowed numeric business values have bounded lengths. Message types and specification labels are restricted to limited character patterns. Specification metadata must come from a trusted loader; character restrictions do not make user-supplied metadata trustworthy.
+
+Raw messages, account/order values, arbitrary diagnostic text, and arbitrary uncertainty text are not sent. Numeric business values and source structure are still disclosed; this is data minimization, not universal anonymization.
+
+**The `deterministic` and `fallback` objects retain original values and diagnostics. They are not redacted and must not be sent to the model or public logs.** The original deterministic summary inside `fallback` is also not guaranteed to be redacted. The fallback `provider_summary` hides business values and cites validation/uncertainty records.
+
+## Bounded model output
+
+Gemini can select wording variant 0 or 1 for each catalog entry and arrange the entries. The final English text and citations are rendered locally from approved variants.
+
+The response must contain only:
+
+```json
+{
+  "items": [
+    {"source_id": "known_facts[0]", "variant": 0}
+  ]
+}
+```
+
+Every catalog source must appear exactly once. Local validation rejects additional prose or properties, invented sources, duplicate sources, omitted sources, invalid variants, invalid JSON, and duplicate JSON keys. Consequently, the model cannot hide validation findings or introduce a new trading conclusion by attaching a valid citation.
+
+This mode provides AI-assisted presentation rather than unrestricted paraphrasing, trading analysis, or free-form question answering.
+
+## Citation precision
+
+Body facts include the parser's existing zero-based token `ordinal`. Message-type and purpose facts include `evidence_fields`.
+
+`[tag=55; ordinal=7]` identifies the eighth token position in the original message. Malformed tokens also count toward token positions. Match the ordinal against `message.fields` to locate a parsed field. This distinguishes repeated tags but is not a repeating-group path or a group-structure validation.
+
+Legacy contexts without ordinals explicitly display `occurrence unavailable`.
+
+- `[known_facts[i]]` identifies a structured fact.
+- `[validation_errors[i]]` identifies an original validation record.
+- `[unknowns[i]]` identifies a recorded uncertainty.
+- `[validation_errors]` can cite an empty findings list in a fallback display.
+
+A missing required tag has no actual field occurrence. Its tag reference identifies the affected tag; the validation record is the evidence, not proof that the field exists.
+
+## Failures and limits
+
+Provider exceptions, empty responses, or non-string responses trigger the existing `explain_deterministically` fallback. The original fallback result and all validation findings are preserved. Providers receive a deep copy, so mutations cannot overwrite the deterministic result. Additional findings supplied as an iterable are materialized before use to preserve them during fallback.
+
+Gemini failure categories:
+
+| Exception type | Meaning |
+| --- | --- |
+| `AIConfigurationError` | Missing/invalid model or key configuration |
+| `AIInputError` | Invalid source or input catalog limit exceeded |
+| `AIOutputError` | Invalid, blocked, truncated, or oversized output |
+| `AITransportError` | HTTP, network, or socket failure |
+
+Fallback reasons display the exception type rather than potentially sensitive exception details.
+
+Requests use a fixed Google HTTPS host, with the key in a header. There are no automatic retries, redirects, or request/response logs. The default socket-operation timeout is 20 seconds, configurable up to 60 seconds. It is **not a strict overall wall-clock deadline**. HTTP errors, including 401/403/429/5xx, trigger fallback without retry.
+
+Catalogs are limited to 128 entries; catalog and response sizes are bounded at 128 KiB. Inputs outside these limits fall back rather than being silently truncated.
+
+## Validation and scope
+
+The regression suite covers disclosure filtering, input immutability, repeated-tag references, missing-field findings, output rejection, fallback preservation, configuration, socket timeout, oversized responses, and HTTP error handling. Run `python -m pytest` for the current results.
+
+A real Gemini demo call has also completed successfully without fallback during integration. That confirms one working configuration, not future model availability, quota, or service behavior.
+
+The supported scope is single-message bounded explanation. Free-form question answering, sequence correlation, repeating-group validation, a full FIX dictionary, and a web interface remain outside this layer's scope.
+
+## Official API references
+
+- [Gemini structured outputs](https://ai.google.dev/gemini-api/docs/structured-output)
+- [Google GenerateContent API definition](https://github.com/googleapis/googleapis/blob/master/google/ai/generativelanguage/v1beta/generative_service.proto)
