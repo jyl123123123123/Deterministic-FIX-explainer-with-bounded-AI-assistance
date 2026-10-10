@@ -2,6 +2,11 @@
 
 from pathlib import Path
 import asyncio
+import os
+from datetime import datetime
+from .analytics import TradingAnalytics
+from .analytics_bridge import AnalyticsBridge
+from .analytics_summary import TradingSummaryService
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -41,7 +46,9 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
-trading_service = TradingDataService()
+analytics = TradingAnalytics()
+trading_service = TradingDataService(event_observer=AnalyticsBridge(analytics))
+summary_service = TradingSummaryService(enabled=os.environ.get("FIX_ENABLE_AI") == "1")
 stream_simulator = StreamSimulator(trading_service.ingest)
 
 
@@ -50,13 +57,27 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/analytics/snapshot")
+def analytics_snapshot(window_seconds: int = Query(default=300, ge=1, le=86400), as_of: datetime | None = None) -> dict:
+    try:
+        return analytics.snapshot(window_seconds, as_of)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/analytics/summary")
+def analytics_summary(window_seconds: int = Query(default=300, ge=1, le=86400), ai: bool = False) -> dict:
+    report = analytics.snapshot(window_seconds)
+    return {"report": report, **summary_service.summarize(report, use_ai=ai)}
+
+
 @app.get("/api/trading/snapshot")
 def trading_snapshot() -> dict:
     return trading_service.snapshot()
 
 
 @app.post("/api/trading/start")
-def start_trading_stream(
+async def start_trading_stream(
     count: int = Query(default=1500, ge=1000, le=2000),
     rate: int = Query(default=25, ge=10, le=100),
     seed: int = Query(default=20261010),

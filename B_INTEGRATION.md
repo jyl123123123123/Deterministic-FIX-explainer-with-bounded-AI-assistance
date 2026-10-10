@@ -206,3 +206,109 @@ For template-only use without credentials:
 Do not run both API commands simultaneously. The health endpoint is
 `http://127.0.0.1:8000/api/health`. The current API loads the fixture specification
 subset, so schema findings are limited to that subset.
+
+## Trading analytics (B upgrade)
+
+`analytics.py` consumes validated `AnalyticsEvent` records. `analytics_bridge.py`
+connects A's parser and order correlator to the ledger, including the symbol and
+side inherited from the matched order. A's parser is reused. Only FIX 4.4 new
+orders and Execution Reports with ExecType=F and OrdStatus=1/2 contribute demand
+or fills. Status reports and cancel requests never create fills. Invalid wire
+messages, ambiguous duplicate tags, trade corrections/cancellations, and
+correlation failures are excluded. Validation findings remain separate from AI.
+
+The demo is one connected synthetic session per process. A's correlator has
+process-wide order/ExecID namespaces: restart before starting an independent
+replay with reused IDs. The standalone B ledger supports session-scoped IDs, but
+this does not upgrade A's correlator to a production multi-session engine.
+Corrections are excluded, not applied retroactively; snapshots are not an audited
+corrected trading book. Currency is UNSPECIFIED when absent; never label it USD.
+The bridge currently accepts whole-second SendingTime timestamps as produced by
+A's generator; fractional timestamps require a future adapter extension.
+
+### Offline verification
+
+```bash
+cd ~/Desktop/fix-explainer-team
+.venv/bin/python examples/analytics_demo.py
+.venv/bin/python -m pytest
+```
+
+Python 3.11+ is required. No Gemini call is made by the offline demo or tests.
+
+### API for C
+
+Start the **FastAPI** backend (the older `server/api_server.py` decoder server does
+not provide these analytics endpoints):
+
+```bash
+.venv/bin/python -m uvicorn fix_explainer.api:app --host 127.0.0.1 --port 8000
+```
+
+Then start A's simulation and fetch B's snapshots:
+
+```bash
+curl -X POST 'http://127.0.0.1:8000/api/trading/start?count=1500&rate=25&seed=20261010'
+curl 'http://127.0.0.1:8000/api/analytics/snapshot?window_seconds=300'
+curl -X POST 'http://127.0.0.1:8000/api/analytics/summary?window_seconds=300'
+```
+
+Poll snapshots once per second. Fields include `snapshot_id`, UTC window bounds,
+`symbols`, `currency_totals`, `total_executions`, `total_orders`, `previous_symbols`,
+`anomalies`, `findings`, `sources`, and `limitations`. Decimal monetary fields are
+**strings**; C should format them for display without summing different currencies.
+Sort instrument rows within each currency for Top Bought / Top Sold. Each row
+contains separate buy/sell order quantities, fill quantities, and notionals.
+`observed_side_notional_difference` is observed session-side imbalance, **not**
+market capital flow or aggressor-side direction. Quantities have instrument units;
+no contract multiplier or FX conversion is supplied.
+
+Window intervals are `(start, end]` in event time, anchored to the greatest
+accepted event timestamp. Optional `as_of` on the snapshot endpoint accepts a
+URL-encoded timezone-aware ISO timestamp. Late events update historical windows.
+An anomaly requires fill quantity at least twice the previous equal window and
+an absolute increase of at least 100 units, with a positive previous baseline.
+This descriptive threshold is not a trading signal. Empty baselines produce no
+surge claim. The ledger holds at most 10,000 accepted events and fails closed at
+capacity; it is in memory, independently of A's SQLite raw storage.
+
+The existing `/api/trading/snapshot` and WebSocket remain A's legacy output.
+Use `/api/analytics/snapshot` for B's fill counts and monetary statistics.
+C's current frontend is not automatically converted into a trading dashboard by
+this backend change; C must connect the new endpoints and render the fields.
+
+### Optional bounded Gemini aggregate summaries
+
+AI aggregate summaries are disabled by default. To enable them, set
+`FIX_ENABLE_AI=1` before starting FastAPI and supply `GEMINI_API_KEY` and
+`GEMINI_MODEL` through the environment or the existing secure launcher:
+
+```bash
+export FIX_ENABLE_AI=1
+.venv/bin/python examples/start_api.py
+curl -X POST 'http://127.0.0.1:8000/api/analytics/summary?ai=true'
+```
+
+No automatic/background AI requests are scheduled. Only explicit `ai=true`
+summary requests may call Gemini. Limit: 20 attempts per backend process, at least
+10 seconds between attempts; failures consume attempts, no automatic retries.
+Restarting resets the budget. Cache hits for identical snapshots reuse successful
+summaries (up to 32 cached snapshots). These controls apply to **aggregate summary
+calls**, not existing decoder AI calls or frontend ChatPanel calls. Enabled API
+calls can incur provider charges; leave aggregate AI disabled for a no-call demo.
+
+Gemini receives only approved aggregate wording and snapshot metric citations,
+never order IDs, session IDs, account IDs, raw FIX messages, or credentials in
+prompts. Instrument symbols are disclosed in aggregate mode. It selects/reorders
+approved variants; it cannot invent conclusions. Coverage is bounded to the first
+10 symbol/currency rows and 10 anomalies. References contain the snapshot hash
+and JSON Pointer within the returned `report`, rather than pretending aggregate
+metrics refer to a single raw tag occurrence. Retain the returned report alongside
+the summary for reproducible citations.
+
+Responses contain `report`, `summary`, `provider`, `fallback_used`,
+`fallback_reason`, `cached`, and `snapshot_id`. Disabled AI, throttling, exhausted
+budgets, transport failures, and invalid selections return a cited deterministic
+summary with a sanitized reason. Counts and validation findings are unchanged.
+The Gemini network path is covered by mocked transport tests; live account access
+and quota must be checked separately with an explicitly enabled call.

@@ -131,7 +131,8 @@ def normalize_fix_message(
 class TradingDataService:
     """Coordinates normalization, correlation, persistence, and snapshots."""
 
-    def __init__(self, database: str = ":memory:") -> None:
+    def __init__(self, database: str = ":memory:", *, event_observer=None) -> None:
+        self.event_observer = event_observer
         self.repository = SQLiteTradingRepository(database)
         self.correlator = OrderCorrelator()
         self.processed = 0
@@ -159,6 +160,9 @@ class TradingDataService:
         if errors:
             self.parse_errors += 1
             return self.snapshot()
+        preflight = getattr(self.event_observer, "accept_message", None)
+        if preflight is not None and not preflight(parsed, message.raw_message):
+            return self.snapshot()
         event = normalize_fix_message(message.raw_message)
         if event is None:
             return self.snapshot()
@@ -167,6 +171,8 @@ class TradingDataService:
             event,
             order_qty=int(tags[FixTag.ORDER_QTY]) if event.event_type is EventType.ORDER_NEW else None,
         )
+        if self.event_observer is not None:
+            self.event_observer(event, result, parsed, message.raw_message)
         if not result.accepted:
             if result.reason == "UNMATCHED_ORDER":
                 self.unmatched += 1
