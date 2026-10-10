@@ -8,7 +8,7 @@ interface ChatMessage {
 
 const KEY_STORAGE = 'gemini_api_key';
 const MODEL_STORAGE = 'gemini_model';
-const DEFAULT_MODEL = 'gemini-2.0-flash';
+const DEFAULT_MODEL = 'gemini-flash-latest';
 const API_HOST = 'https://generativelanguage.googleapis.com';
 
 const SYSTEM_INSTRUCTION =
@@ -72,7 +72,7 @@ async function callGemini(
       throw new Error('Invalid API key (HTTP 401/403). Check your key and try again.');
     }
     if (resp.status === 404) {
-      throw new Error(`Model not found (HTTP 404). Check the model name "${model}".`);
+      throw new Error(`Model not found (HTTP 404). Try 'gemini-flash-latest' or check the model name.`);
     }
     if (resp.status === 429) {
       throw new Error('Quota exceeded (HTTP 429). Check your Gemini plan and rate limits.');
