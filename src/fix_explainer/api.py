@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import asyncio
+import json
 import os
 import re
 from datetime import datetime
@@ -137,9 +138,8 @@ class ChatRateLimiter:
 chat_limiter = ChatRateLimiter()
 
 
-@app.post("/api/chat", response_model=ChatResponse)
-def chat(request: ChatRequest) -> ChatResponse:
-    """Server-side Gemini chat; the browser never sees credentials."""
+def _gemini_config() -> tuple[str, str]:
+    """Return (model, key) from the environment, or raise 503 if AI is off."""
     if os.environ.get("FIX_ENABLE_AI") != "1":
         raise HTTPException(
             status_code=503,
@@ -155,31 +155,17 @@ def chat(request: ChatRequest) -> ChatResponse:
         or "\r" in key
     ):
         raise HTTPException(status_code=503, detail="AI chat is not configured on this server.")
-    if sum(len(m.text) for m in request.messages) > CHAT_MAX_TOTAL_CHARS:
-        raise HTTPException(status_code=400, detail="Conversation is too long (64 KiB total).")
+    return model, key
+
+
+def _gemini_generate(payload: dict) -> str:
+    """Rate-limited Gemini call with fixed, credential-free error mapping."""
     limited = chat_limiter.check()
     if limited == "AI_BUDGET_EXHAUSTED":
         raise HTTPException(status_code=429, detail="AI call budget exhausted for this server process.")
     if limited is not None:
         raise HTTPException(status_code=429, detail="AI rate limit: please retry in a few seconds.")
-
-    # Normalize for Gemini multi-turn: drop leading model messages and merge
-    # consecutive same-role messages.
-    contents: list[dict] = []
-    for message in request.messages:
-        if not contents and message.role == "model":
-            continue
-        if contents and contents[-1]["role"] == message.role:
-            contents[-1]["parts"][0]["text"] += "\n" + message.text
-        else:
-            contents.append({"role": message.role, "parts": [{"text": message.text}]})
-    if not contents:
-        raise HTTPException(status_code=400, detail="At least one user message is required.")
-
-    payload = {
-        "systemInstruction": {"parts": [{"text": CHAT_SYSTEM_INSTRUCTION}]},
-        "contents": contents,
-    }
+    model, key = _gemini_config()
     try:
         reply = gemini_transport(model, key, payload, CHAT_TIMEOUT_SECONDS)
     except AITransportError as error:
@@ -198,7 +184,98 @@ def chat(request: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=502, detail="Gemini returned an unusable reply.") from error
     if not reply.strip():
         raise HTTPException(status_code=502, detail="Gemini returned an empty reply.")
-    return ChatResponse(reply=reply, provider="gemini")
+    return reply
+
+
+@app.post("/api/chat", response_model=ChatResponse)
+def chat(request: ChatRequest) -> ChatResponse:
+    """Server-side Gemini chat; the browser never sees credentials."""
+    _gemini_config()
+    if sum(len(m.text) for m in request.messages) > CHAT_MAX_TOTAL_CHARS:
+        raise HTTPException(status_code=400, detail="Conversation is too long (64 KiB total).")
+
+    # Normalize for Gemini multi-turn: drop leading model messages and merge
+    # consecutive same-role messages.
+    contents: list[dict] = []
+    for message in request.messages:
+        if not contents and message.role == "model":
+            continue
+        if contents and contents[-1]["role"] == message.role:
+            contents[-1]["parts"][0]["text"] += "\n" + message.text
+        else:
+            contents.append({"role": message.role, "parts": [{"text": message.text}]})
+    if not contents:
+        raise HTTPException(status_code=400, detail="At least one user message is required.")
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": CHAT_SYSTEM_INSTRUCTION}]},
+        "contents": contents,
+    }
+    return ChatResponse(reply=_gemini_generate(payload), provider="gemini")
+
+
+FREE_SUMMARY_INSTRUCTION = (
+    "You are an analyst for a FIX trading-flow dashboard. Given these "
+    "statistics (simulated data), write a natural, concise summary in "
+    "Simplified Chinese: which companies dominate, buy/sell volumes and "
+    "notional, the rough sector/industry of each symbol based on your "
+    "knowledge (e.g. AAPL=科技/消费电子), and any notable imbalances or "
+    "anomalies. 3-6 short paragraphs or bullet points. Plain text, no "
+    "citations, no markdown tables. State that the data is simulated."
+)
+
+_SYMBOL_STAT_KEYS = (
+    "symbol",
+    "currency",
+    "buy_order_qty",
+    "sell_order_qty",
+    "buy_fill_qty",
+    "sell_fill_qty",
+    "buy_notional",
+    "sell_notional",
+)
+
+
+def _compact_report(report: dict) -> dict:
+    """Keep only the key numeric fields so the prompt stays small."""
+    return {
+        "simulated": True,
+        "window_seconds": report.get("window_seconds"),
+        "window_end": report.get("window_end"),
+        "total_orders": report.get("total_orders"),
+        "total_executions": report.get("total_executions"),
+        "symbols": [
+            {key: row.get(key) for key in _SYMBOL_STAT_KEYS}
+            for row in report.get("symbols", [])
+        ],
+        "anomalies": [
+            {
+                "symbol": a.get("symbol"),
+                "side": a.get("side"),
+                "previous": a.get("previous"),
+                "current": a.get("current"),
+            }
+            for a in report.get("anomalies", [])
+        ],
+        "findings": report.get("findings", {}),
+    }
+
+
+@app.post("/api/analytics/free-summary", response_model=ChatResponse)
+def analytics_free_summary(window_seconds: int = Query(default=300, ge=1, le=86400)) -> ChatResponse:
+    """Natural-language Chinese summary of the current window via Gemini."""
+    report = analytics.snapshot(window_seconds)
+    if not report.get("total_executions") and not report.get("symbols"):
+        return ChatResponse(
+            reply="当前统计窗口内没有数据。请先在 Trading Flow 页启动一次回放。",
+            provider="none",
+        )
+    stats = json.dumps(_compact_report(report), ensure_ascii=False)
+    payload = {
+        "systemInstruction": {"parts": [{"text": FREE_SUMMARY_INSTRUCTION}]},
+        "contents": [{"role": "user", "parts": [{"text": f"Trading-flow statistics JSON:\n{stats}"}]}],
+    }
+    return ChatResponse(reply=_gemini_generate(payload), provider="gemini")
 
 
 @app.get("/api/analytics/snapshot")

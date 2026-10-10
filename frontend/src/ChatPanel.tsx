@@ -23,9 +23,8 @@ function stripCitations(text: string): { body: string; citations: string[] } {
 }
 
 interface SummaryResponse {
-  summary: string;
+  reply: string;
   provider: string;
-  fallback_reason: string | null;
 }
 
 /** Free-form chat is served by the backend; no browser-side key needed. */
@@ -118,13 +117,13 @@ export default function ChatPanel() {
     }
   };
 
-  // Server-side trading-flow summary; the result lands in the message flow as
-  // a dismissible summary bubble.
-  const summarize = async (ai: boolean) => {
+  // Server-side natural-language summary of the trading window; the result
+  // lands in the message flow as a dismissible summary bubble.
+  const summarize = async () => {
     if (summaryTyping) return;
-    setSummaryTyping(ai ? 'gemini' : 'template');
+    setSummaryTyping('gemini');
     try {
-      const resp = await fetch(`/api/analytics/summary?ai=${ai}`, { method: 'POST' });
+      const resp = await fetch('/api/analytics/free-summary', { method: 'POST' });
       const data: unknown = await resp.json().catch(() => null);
       if (!resp.ok) {
         const detail =
@@ -134,14 +133,15 @@ export default function ChatPanel() {
         throw new Error(detail);
       }
       const s = data as SummaryResponse;
-      const { body, citations } = stripCitations(s.summary);
+      // Free summaries carry no citations; stripCitations stays as a no-op
+      // fallback should the format ever include them again.
+      const { body, citations } = stripCitations(s.reply);
       pushMessage({
         role: 'ai',
         text: body,
         summary: true,
         citations,
         provider: s.provider,
-        fallbackReason: s.fallback_reason ?? null,
       });
     } catch (e) {
       pushMessage({
@@ -183,12 +183,14 @@ export default function ChatPanel() {
           <button
             className="btn btn-secondary"
             disabled={summaryTyping !== false}
-            onClick={() => void summarize(true)}
+            onClick={() => void summarize()}
           >
             {summaryTyping === 'gemini' ? 'Summarizing…' : 'Gemini Summary'}
           </button>
         </div>
-        <p className="chat-summary-hint">Summarizes the latest trading window into the chat.</p>
+        <p className="chat-summary-hint">
+          Natural-language summary of the latest trading window.
+        </p>
       </div>
 
       <div className="chat-messages" ref={listRef}>
@@ -213,7 +215,12 @@ export default function ChatPanel() {
               </div>
               <div className="summary-body">{m.text}</div>
               <div className="chat-summary-meta">
-                {m.provider && <span className="badge badge-ok">Provider: {m.provider}</span>}
+                {m.provider === 'gemini' && (
+                  <span className="badge badge-ok">Provider: gemini</span>
+                )}
+                {m.provider === 'none' && (
+                  <span className="badge badge-neutral">No AI needed</span>
+                )}
                 {m.fallbackReason && (
                   <span className="badge badge-warn">Fallback — {m.fallbackReason}</span>
                 )}

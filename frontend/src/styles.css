@@ -480,6 +480,12 @@ body {
   background: rgba(210, 153, 34, 0.1);
 }
 
+.badge-neutral {
+  color: var(--text-dim);
+  border-color: var(--border);
+  background: rgba(139, 148, 158, 0.08);
+}
+
 /* Backend explanation + findings */
 
 .provider-summary {

@@ -131,3 +131,69 @@ def test_chat_endpoint_enforces_request_limits(monkeypatch):
     ]
     response = client.post('/api/chat', json={'messages': big_total})
     assert response.status_code == 400
+
+
+FREE_SUMMARY_REPORT = {
+    'snapshot_id': 'test-snapshot',
+    'window_seconds': 300,
+    'window_end': '2026-10-10T23:14:08+00:00',
+    'total_orders': 12,
+    'total_executions': 5,
+    'symbols': [
+        {
+            'symbol': 'AAPL',
+            'currency': 'USD',
+            'buy_order_qty': 300,
+            'sell_order_qty': 100,
+            'buy_fill_qty': 250,
+            'sell_fill_qty': 80,
+            'buy_notional': '46375.00',
+            'sell_notional': '14840.00',
+        }
+    ],
+    'anomalies': [],
+    'findings': {},
+}
+
+
+def test_free_summary_returns_natural_language_reply(monkeypatch):
+    import fix_explainer.api as api
+
+    monkeypatch.setenv('FIX_ENABLE_AI', '1')
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-key')
+    monkeypatch.setenv('GEMINI_MODEL', 'gemini-flash-latest')
+    monkeypatch.setattr(api.chat_limiter, 'calls', 0)
+    monkeypatch.setattr(api.chat_limiter, 'last_call', None)
+
+    class StubAnalytics:
+        def snapshot(self, window_seconds=300, as_of=None):
+            return dict(FREE_SUMMARY_REPORT)
+
+    monkeypatch.setattr(api, 'analytics', StubAnalytics())
+
+    def fake_transport(model, key, payload, timeout):
+        stats = payload['contents'][0]['parts'][0]['text']
+        assert 'AAPL' in stats and '46375.00' in stats
+        return '模拟数据摘要：AAPL 主导买盘。'
+
+    monkeypatch.setattr(api, 'gemini_transport', fake_transport)
+    response = client.post('/api/analytics/free-summary')
+
+    assert response.status_code == 200
+    assert response.json() == {'reply': '模拟数据摘要：AAPL 主导买盘。', 'provider': 'gemini'}
+
+
+def test_free_summary_requires_ai_enabled(monkeypatch):
+    import fix_explainer.api as api
+
+    monkeypatch.setenv('FIX_ENABLE_AI', '0')
+
+    class StubAnalytics:
+        def snapshot(self, window_seconds=300, as_of=None):
+            return dict(FREE_SUMMARY_REPORT)
+
+    monkeypatch.setattr(api, 'analytics', StubAnalytics())
+    response = client.post('/api/analytics/free-summary')
+
+    assert response.status_code == 503
+    assert 'not enabled' in response.json()['detail']
