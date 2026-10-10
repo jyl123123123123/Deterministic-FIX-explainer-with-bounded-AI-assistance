@@ -128,12 +128,12 @@ export default function ChatPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, typing, summaryTyping]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    alive.current = true;
+    return () => {
       alive.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const saveSettings = () => {
     const key = keyDraft.trim();
@@ -308,13 +308,6 @@ export default function ChatPanel() {
 
       <div className="chat-summary">
         <div className="chat-summary-actions">
-          <button
-            className="btn btn-secondary"
-            disabled={summaryTyping !== false}
-            onClick={() => void summarize(false)}
-          >
-            {summaryTyping === 'template' ? 'Summarizing…' : 'Template Summary'}
-          </button>
           <button
             className="btn btn-secondary"
             disabled={summaryTyping !== false}
