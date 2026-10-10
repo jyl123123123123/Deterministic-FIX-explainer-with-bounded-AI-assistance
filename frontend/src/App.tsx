@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { parseFixMessage, type ParseResult } from './fix/parser';
 import { buildExplanation, type Explanation } from './fix/explainer';
 import { SAMPLES } from './fix/samples';
 import { explainViaApi, ApiError, type ExplainResponse } from './api';
+import { buildNewOrderSingle, toDisplay } from './fix/builder';
 import Background from './Background';
+import ChatPanel from './ChatPanel';
 
 type Tab = 'analyzer' | 'builder';
 type Mode = 'backend' | 'local';
@@ -35,14 +37,6 @@ interface ViewModel {
   orderType: string;
   price: string;
   fields: ViewField[];
-}
-
-function formatUtcTimestamp(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return (
-    `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}` +
-    `-${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`
-  );
 }
 
 function viewFromBackend(res: ExplainResponse): ViewModel {
@@ -119,6 +113,10 @@ export default function App() {
     price: '185.50',
   });
   const [builderError, setBuilderError] = useState('');
+  const [generated, setGenerated] = useState('');
+  const [copied, setCopied] = useState(false);
+  const requestIdRef = useRef(0);
+  const lastRequestedRef = useRef('');
 
   const clearResults = () => {
     setView(null);
@@ -133,15 +131,19 @@ export default function App() {
       clearResults();
       return;
     }
+    const requestId = ++requestIdRef.current;
+    lastRequestedRef.current = message;
     setAnalyzing(true);
     try {
       const res = await explainViaApi(message);
+      if (requestId !== requestIdRef.current) return; // stale response, input moved on
       setBackend(res);
       setView(viewFromBackend(res));
       setLocalExplanation(null);
       setMode('backend');
       setError('');
     } catch (e) {
+      if (requestId !== requestIdRef.current) return;
       if (e instanceof ApiError && e.status >= 400 && e.status < 500) {
         // The backend rejected the message itself; show its error verbatim.
         clearResults();
@@ -161,9 +163,39 @@ export default function App() {
         }
       }
     } finally {
-      setAnalyzing(false);
+      if (requestId === requestIdRef.current) setAnalyzing(false);
     }
   };
+
+  // Auto-analyze with a debounce: 550ms after the user stops typing.
+  // Empty input returns to the blank state; stale in-flight requests are
+  // invalidated via requestIdRef so their responses are ignored.
+  useEffect(() => {
+    const msg = input;
+    if (!msg.trim()) {
+      requestIdRef.current++;
+      lastRequestedRef.current = '';
+      setAnalyzing(false);
+      clearResults();
+      setError('');
+      return;
+    }
+    if (msg === lastRequestedRef.current) return; // already requested (button / builder)
+    requestIdRef.current++; // invalidate any in-flight request for older input
+    const timer = setTimeout(() => {
+      if (msg !== lastRequestedRef.current) void analyze(msg);
+    }, 550);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input]);
+
+  // Lock vertical scroll on the blank initial page (desktop only); unlock as
+  // soon as results or an error make the page taller than one viewport.
+  const hasResults = Boolean(view || error);
+  useEffect(() => {
+    document.body.classList.toggle('no-scroll', !hasResults);
+    return () => document.body.classList.remove('no-scroll');
+  }, [hasResults]);
 
   const fillSample = (message: string) => {
     setInput(message);
@@ -181,23 +213,44 @@ export default function App() {
       setBuilderError('Quantity must be a positive number.');
       return;
     }
-    let priceField = '';
+    let price: string | undefined;
     if (builder.orderType === '2') {
-      const price = Number(builder.price);
-      if (!Number.isFinite(price) || price <= 0) {
+      const p = Number(builder.price);
+      if (!Number.isFinite(p) || p <= 0) {
         setBuilderError('Limit price is required for limit orders.');
         return;
       }
-      priceField = `44=${builder.price}|`;
+      price = builder.price;
     }
     setBuilderError('');
-    const message =
-      `8=FIX.4.2|35=D|49=FIXINSIGHT|56=EXCHANGE|34=1|52=${formatUtcTimestamp(new Date())}` +
-      `|11=CLI-${Date.now()}|55=${symbol}|54=${builder.side}|38=${builder.quantity}` +
-      `|40=${builder.orderType}|${priceField}59=0|10=000|`;
-    setInput(message);
+    const message = toDisplay(
+      buildNewOrderSingle({
+        symbol,
+        side: builder.side,
+        quantity: builder.quantity,
+        orderType: builder.orderType,
+        price,
+      }),
+    );
+    // Stay on this tab: show the generated message inline; analysis is opt-in.
+    setGenerated(message);
+    setCopied(false);
+  };
+
+  const copyGenerated = async () => {
+    try {
+      await navigator.clipboard.writeText(generated);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API unavailable (e.g. permissions); user can copy manually.
+    }
+  };
+
+  const analyzeGenerated = () => {
+    setInput(generated);
     setTab('analyzer');
-    void analyze(message);
+    void analyze(generated);
   };
 
   const sideClass = view?.sideRaw === '1' ? 'side-buy' : view?.sideRaw === '2' ? 'side-sell' : '';
@@ -228,10 +281,15 @@ export default function App() {
         </nav>
       </header>
 
+      <div className="content-row">
+        <div className="main-col">
       {tab === 'analyzer' && (
         <main>
           <section className="card">
-            <h2>Raw FIX Message</h2>
+            <h2>
+              Raw FIX Message
+              {analyzing && <span className="analyzing-hint">Analyzing…</span>}
+            </h2>
             <textarea
               className="raw-input"
               value={input}
@@ -472,7 +530,6 @@ export default function App() {
                   }
                 >
                   <option value="2">Limit</option>
-                  <option value="1">Market</option>
                 </select>
               </label>
               <label className="form-field">
@@ -482,7 +539,6 @@ export default function App() {
                   min="0"
                   step="0.01"
                   value={builder.price}
-                  disabled={builder.orderType === '1'}
                   onChange={(e) => setBuilder({ ...builder, price: e.target.value })}
                 />
               </label>
@@ -492,12 +548,33 @@ export default function App() {
               Generate FIX Message
             </button>
             <p className="hint">
-              Generates a New Order Single (35=D) into the input box on the Analyzer tab and
-              analyzes it immediately.
+              Generates a complete New Order Single (35=D) with valid BodyLength and CheckSum,
+              shown below. Pipe (|) is a readable rendering; the analyzer converts it to SOH.
+              Only Limit is offered: the loaded Orchestra subset defines OrdType=2 (Limit) as
+              the sole valid value.
             </p>
+            {generated && (
+              <div className="builder-result">
+                <h3>Generated FIX Message</h3>
+                <pre className="generated-message">{generated}</pre>
+                <div className="builder-result-actions">
+                  <button className="btn btn-secondary" onClick={() => void copyGenerated()}>
+                    {copied ? 'Copied!' : 'Copy'}
+                  </button>
+                  <button className="btn btn-primary" onClick={analyzeGenerated}>
+                    Analyze this message
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
         </main>
       )}
+        </div>
+        <aside className="chat-col">
+          <ChatPanel />
+        </aside>
+      </div>
       </div>
     </>
   );
