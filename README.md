@@ -1,36 +1,94 @@
 # FIX Insight
 
-FIX protocol message analyzer: a Python `fix_explainer` library (see B_INTEGRATION.md)
-wrapped in a thin stdlib HTTP API, plus a React + TypeScript + Vite frontend.
+A deterministic FIX decoder and simulated trading-flow dashboard with optional,
+bounded Gemini summaries. Order requests and confirmed fills are counted separately.
+Statistics describe the connected FIX flow, not the whole market.
 
-**Live demo (GitHub Pages):**
-https://jyl123123123123.github.io/Deterministic-FIX-explainer-with-bounded-AI-assistance/
+## Run locally
 
-The hosted page has no Python backend, so message analysis runs in local
-in-browser mode (yellow "Local mode (backend offline)" badge — expected). The
-Gemini Chat panel works on the hosted page: click Edit in the chat header,
-paste your own Gemini API key (get one at https://aistudio.google.com/api-keys),
-optionally adjust the model, and Save. The key is stored only in your browser's
-localStorage and sent only to Google's Gemini API.
-
-## Run locally (two terminals, from the repo root)
+Python 3.11+ and Node.js are required. Use two terminals from the repository root:
 
 ```bash
-# 1. API server on :8000 (no package install, no third-party deps; Python 3.11+)
-PYTHONPATH=src python3 server/api_server.py
-
-# 2. Frontend on :5173 (dev proxy forwards /api -> :8000)
-cd frontend && npm install && npm run dev
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e '.[test]'
+.venv/bin/python examples/start_api.py
 ```
 
-Open http://localhost:5173. Without the API server the frontend falls back to
-local in-browser parsing and shows a "Local mode (backend offline)" badge.
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-Gemini provider for the backend explainer: set both `GEMINI_API_KEY` and
-`GEMINI_MODEL` before starting the API server; otherwise the local template
-provider is used. (This is separate from the chat panel's browser-side key.)
+Open http://localhost:5173. AI is disabled by default and no key is required.
+`server/api_server.py` is now a compatibility launcher for the same FastAPI app;
+there is one backend API contract. The interactive API documentation is at
+http://127.0.0.1:8000/docs.
 
-## Deploy
+## Demo
 
-`npm run build` in `frontend/` (build `base` is set to the Pages project path)
-and publish `frontend/dist` to the `gh-pages` branch.
+1. Open **Trading Flow** and select a replay speed (10–100 messages/second).
+2. Start a 1,500-message synthetic order lifecycle replay.
+3. Watch demand quantities, confirmed fills, and per-currency monetary rankings.
+4. Pause, resume, adjust speed, or stop. Starting another replay clears previous
+   order state and statistics. The process-wide AI budget is retained.
+5. Select **Template summary** for an offline, cited explanation. Expand the
+   evidence snapshot to resolve JSON Pointer citations.
+
+The Analyzer and Order Builder remain available. When no backend is reachable,
+the Analyzer can use its separate browser implementation, explicitly labeled
+Local mode; it does not provide server validation or trading analytics. API errors
+and schema mismatches are shown rather than silently interpreted as connectivity
+failures.
+
+## Optional Gemini
+
+```bash
+export FIX_ENABLE_AI=1
+.venv/bin/python examples/start_api.py
+```
+
+The launcher prompts for a hidden key and model ID. Credentials remain in backend
+process memory. In Trading Flow, explicitly select **Gemini summary** to request
+one summary. No model calls are made by polling, replays, or template summaries.
+AI may incur provider charges; leave it disabled for a no-call demonstration.
+
+Gemini only selects/reorders approved facts with local citations. It never parses
+FIX, calculates totals, or alters validation. Raw messages, account/order/session
+IDs, and diagnostic free text are excluded from aggregate prompts. Aggregate
+symbols and numeric metrics are disclosed. All AI HTTP requests share a maximum
+of 20 attempts per process and a minimum interval of 10 seconds. Failures consume
+attempts; no automatic retries. Successful identical aggregate snapshots are
+cached. Failure/disabled/budget responses return a deterministic explanation.
+
+Unrestricted browser chat and browser key entry have been removed. Keys formerly
+saved by an older frontend can be removed via the browser's site storage controls;
+this version never reads or uses them. A frontend-only GitHub Pages deployment
+cannot run the Python statistics or server-side Gemini; use local full-stack demo
+or deploy the backend separately with appropriate access controls.
+
+## Verification
+
+```bash
+.venv/bin/python -m pytest
+.venv/bin/python examples/analytics_demo.py
+cd frontend
+npm run build
+```
+
+Tests use mocked Gemini responses and never spend API quota. To check a real key
+and quota, start the explicitly enabled backend and request one Gemini summary;
+inspect `provider` and `fallback_reason`. Alternatively run
+`.venv/bin/python examples/check_gemini.py` for one secure, opt-in live check. A template response is not proof of a
+successful Gemini call. Do not put keys in source files, commits, or frontend env.
+
+## Boundaries
+
+The bridge supports FIX 4.4 synthetic lifecycle messages with whole-second UTC
+SendingTime. Confirmed new fills require ExecType=F and OrdStatus=1/2. Unsupported
+corrections and trade cancellations are excluded, not applied retroactively.
+Statistics are in memory, with a 10,000-event bound. Multi-session production FIX,
+fractional SendingTime support, correction processing, and durable analytics
+recovery are outside the demo scope. Currency absent from input is UNSPECIFIED,
+never implicitly USD. No FX conversion, contract multipliers, or aggressor-side
+inference is performed. See B_INTEGRATION.md for API and evidence details.

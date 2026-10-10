@@ -1,5 +1,6 @@
 """Consume A's correlated events without replacing its FIX parser."""
 from datetime import datetime, timezone
+import re
 
 from .analytics import AnalyticsEvent
 from .integrity import validate_integrity
@@ -20,12 +21,15 @@ class AnalyticsBridge:
             valid = False
         try:
             datetime.strptime(tags[52], '%Y%m%d-%H:%M:%S')
+            valid = valid and bool(tags.get(49)) and bool(tags.get(56))
+            if 15 in tags:
+                valid = valid and bool(re.fullmatch(r'[A-Z]{3}', tags[15]))
             if tags.get(35) == 'D':
-                valid = valid and tags.get(54) in ('1', '2') and bool(tags.get(55)) and int(tags[38]) > 0
+                valid = valid and tags.get(54) in ('1', '2') and bool(re.fullmatch(r'[A-Za-z0-9._-]{1,32}', tags.get(55, ''))) and 0 < int(tags[38]) <= 10**12
             if tags.get(35) == '8' and tags.get(150) == 'F':
                 from decimal import Decimal
                 price = Decimal(tags[31])
-                valid = valid and int(tags[32]) > 0 and price.is_finite() and price > 0 and tags.get(39) in ('1', '2')
+                valid = valid and int(tags[32]) > 0 and price.is_finite() and 0 < price <= Decimal('1e12') and price.as_tuple().exponent >= -12 and bool(tags.get(17)) and tags.get(39) in ('1', '2')
         except (KeyError, ValueError, ArithmeticError):
             valid = False
         # A currently treats CancelRequest as canceled. Do not let a request
@@ -34,6 +38,18 @@ class AnalyticsBridge:
             return False
         if not valid:
             self.analytics.reject('EXCLUDED_WIRE_OR_EXECUTION_TYPE')
+        return valid
+
+    def accept_event(self, event, correlator, parsed):
+        """Check explicit metadata before A can mutate the matched order."""
+        order = correlator._find_order(event)
+        if order is None:
+            return True  # A reports unmatched orders through its existing result.
+        tags = {f.tag: f.value for f in parsed.fields}
+        valid = ((55 not in tags or tags[55] == order.symbol) and
+                 (54 not in tags or tags[54] == ('1' if order.side == 'BUY' else '2')))
+        if not valid:
+            self.analytics.reject('CONFLICTING_ORDER_METADATA')
         return valid
 
     def __call__(self, event, result, parsed, payload):

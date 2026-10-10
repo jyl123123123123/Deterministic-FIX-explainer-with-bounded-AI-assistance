@@ -32,3 +32,45 @@ def test_explain_endpoint_rejects_non_ascii_input() -> None:
     response = client.post("/api/explain", json={"message": "35=D|55=苹果|"})
 
     assert response.status_code == 400
+
+def test_explain_contract_matches_browser_and_preserves_legacy_envelope():
+    result = client.post('/api/explain', json={'message': FIX_MESSAGE}).json()
+    assert result['provider'] == 'template'
+    assert result['deterministic'] == result['explanation']['deterministic']
+    assert result['provider_summary'] == result['explanation']['provider_summary']
+
+
+def test_ai_off_never_calls_transport(monkeypatch):
+    import fix_explainer.api as api
+    monkeypatch.setattr(api.summary_service, 'enabled', False)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('A disabled provider must not be constructed')
+    monkeypatch.setattr(api, 'GeminiExplanationProvider', forbidden)
+    result = client.post('/api/explain', json={'message': FIX_MESSAGE, 'mode': 'ai'}).json()
+    assert result['provider'] == 'template'
+    assert result['fallback_used'] is True
+
+
+def test_api_stream_controls_and_new_run_reset():
+    import time
+    with TestClient(app) as connected:
+        first = connected.post('/api/trading/start?count=1000&rate=100').json()
+        run_id = first['run_id']
+        time.sleep(0.12)
+        assert connected.post('/api/trading/start').status_code == 409
+        paused = connected.post(f'/api/trading/runs/{run_id}/pause?rate=50').json()
+        assert paused['status'] == 'PAUSED'
+        assert paused['rate'] == 50
+        time.sleep(0.08)
+        assert connected.get(f'/api/trading/runs/{run_id}').json()['processed'] == paused['processed']
+        assert connected.get('/api/analytics/snapshot').json()['total_orders'] > 0
+        assert connected.post(f'/api/trading/runs/{run_id}/stop').json()['status'] == 'STOPPED'
+        second = connected.post('/api/trading/start?count=1000&rate=100').json()
+        assert second['run_id'] != run_id
+        time.sleep(0.08)
+        fresh = connected.get('/api/analytics/snapshot').json()
+        assert fresh['total_orders'] > 0
+        assert 'CORRELATION_REJECTED' not in fresh['findings']
+        assert connected.post(f"/api/trading/runs/{second['run_id']}/pause").status_code == 200
+        assert connected.post(f"/api/trading/runs/{second['run_id']}/resume").json()['status'] == 'RUNNING'
+        connected.post(f"/api/trading/runs/{second['run_id']}/stop")

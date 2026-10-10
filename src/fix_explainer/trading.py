@@ -163,8 +163,17 @@ class TradingDataService:
         preflight = getattr(self.event_observer, "accept_message", None)
         if preflight is not None and not preflight(parsed, message.raw_message):
             return self.snapshot()
-        event = normalize_fix_message(message.raw_message)
+        try:
+            event = normalize_fix_message(message.raw_message)
+        except (ValueError, ArithmeticError):
+            self.parse_errors += 1
+            if self.event_observer is not None:
+                self.event_observer.analytics.reject("INVALID_NORMALIZED_EVENT")
+            return self.snapshot()
         if event is None:
+            return self.snapshot()
+        event_gate = getattr(self.event_observer, "accept_event", None)
+        if event_gate is not None and not event_gate(event, self.correlator, parsed):
             return self.snapshot()
         tags = _tags(parsed)
         result = self.correlator.apply(

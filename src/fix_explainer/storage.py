@@ -83,7 +83,7 @@ class SQLiteTradingRepository:
 
     def __init__(self, database: str | Path = ":memory:") -> None:
         self.database = str(database)
-        self._connection = sqlite3.connect(self.database)
+        self._connection = sqlite3.connect(self.database, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._connection.executescript(SCHEMA)

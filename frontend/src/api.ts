@@ -1,4 +1,4 @@
-// Client for the fix_explainer HTTP wrapper (server/api_server.py).
+// Client for the canonical fix_explainer FastAPI backend.
 // All requests use relative paths; the Vite dev proxy forwards /api to :8000.
 
 export interface KnownFactField {
@@ -77,6 +77,9 @@ export async function explainViaApi(message: string): Promise<ExplainResponse> {
         ? data.error
         : `API error ${resp.status}`;
     throw new ApiError(resp.status, detail);
+  }
+  if (!data || typeof data !== 'object' || !('deterministic' in data) || !('provider_summary' in data)) {
+    throw new ApiError(502, 'Backend response schema mismatch. Start the current FastAPI backend.');
   }
   return data as ExplainResponse;
 }

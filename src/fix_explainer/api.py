@@ -34,9 +34,14 @@ class ExplainResponse(BaseModel):
     mode: str
     message: dict
     explanation: dict
+    provider: str
+    provider_summary: str
+    deterministic: dict
+    fallback_used: bool
+    fallback_reason: str | None
 
 
-FIXTURE_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
+FIXTURE_DIR = Path(__file__).resolve().parent / "data"
 SPECIFICATION = load_orchestra(FIXTURE_DIR / "fix_orchestra_subset.xml")
 
 app = FastAPI(title="Deterministic FIX Explainer API", version="0.1.0")
@@ -49,7 +54,29 @@ app.add_middleware(
 analytics = TradingAnalytics()
 trading_service = TradingDataService(event_observer=AnalyticsBridge(analytics))
 summary_service = TradingSummaryService(enabled=os.environ.get("FIX_ENABLE_AI") == "1")
-stream_simulator = StreamSimulator(trading_service.ingest)
+def ingest_current(message):
+    return trading_service.ingest(message)
+
+
+stream_simulator = StreamSimulator(ingest_current)
+active_run_id = None
+
+
+class BudgetedMessageProvider:
+    def summarize(self, context):
+        from .ai import AIConfigurationError
+        with summary_service.lock:
+            if not summary_service.enabled:
+                raise AIConfigurationError("AI disabled")
+            now = summary_service.clock()
+            if summary_service.calls >= summary_service.max_calls or (
+                summary_service.last_call is not None and now - summary_service.last_call < summary_service.interval
+            ):
+                raise AIConfigurationError("AI budget or interval limit")
+            summary_service.calls += 1
+            summary_service.last_call = now
+            return GeminiExplanationProvider().summarize(context)
+
 
 
 @app.get("/api/health")
@@ -76,17 +103,42 @@ def trading_snapshot() -> dict:
     return trading_service.snapshot()
 
 
+@app.get("/api/trading/active")
+def active_trading_run() -> dict | None:
+    return stream_simulator.status(active_run_id) if active_run_id else None
+
+
 @app.post("/api/trading/start")
 async def start_trading_stream(
     count: int = Query(default=1500, ge=1000, le=2000),
     rate: int = Query(default=25, ge=10, le=100),
     seed: int = Query(default=20261010),
 ) -> dict:
+    global analytics, trading_service, active_run_id
+    if active_run_id and stream_simulator.status(active_run_id)["status"] in ("RUNNING", "PAUSED"):
+        raise HTTPException(status_code=409, detail="A replay is already active.")
+    config = StreamConfig(count=count, rate=rate, seed=seed)
+    trading_service.close()
+    analytics = TradingAnalytics()
+    trading_service = TradingDataService(event_observer=AnalyticsBridge(analytics))
     try:
-        run = stream_simulator.start(StreamConfig(count=count, rate=rate, seed=seed))
+        run = stream_simulator.start(config)
+        active_run_id = run.run_id
     except (RuntimeError, ValueError) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return run.snapshot()
+
+
+@app.post("/api/trading/runs/{run_id}/{action}")
+async def control_run(run_id: str, action: Literal["pause", "resume", "stop"], rate: int | None = Query(default=None, ge=10, le=100)) -> dict:
+    try:
+        if action == "stop":
+            return (await stream_simulator.stop(run_id)).snapshot()
+        return stream_simulator.control(run_id, action, rate).snapshot()
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Unknown run") from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @app.get("/api/trading/runs/{run_id}")
@@ -125,7 +177,7 @@ def explain(request: ExplainRequest) -> ExplainResponse:
         *validate_message_schema(parsed, SPECIFICATION),
     )
     provider = (
-        GeminiExplanationProvider()
+        BudgetedMessageProvider()
         if request.mode == "ai"
         else TemplateExplanationProvider()
     )
@@ -139,6 +191,11 @@ def explain(request: ExplainRequest) -> ExplainResponse:
         mode=request.mode,
         message=message_to_dict(parsed, errors),
         explanation=explanation,
+        provider="gemini" if request.mode == "ai" and not explanation["fallback_used"] else "template",
+        provider_summary=explanation["provider_summary"],
+        deterministic=explanation["deterministic"],
+        fallback_used=explanation["fallback_used"],
+        fallback_reason=explanation["fallback_reason"],
     )
 
 

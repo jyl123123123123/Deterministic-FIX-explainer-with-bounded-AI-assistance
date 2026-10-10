@@ -6,8 +6,9 @@ import { explainViaApi, ApiError, type ExplainResponse } from './api';
 import { buildNewOrderSingle, toDisplay } from './fix/builder';
 import Background from './Background';
 import ChatPanel from './ChatPanel';
+import TradingDashboard from './TradingDashboard';
 
-type Tab = 'analyzer' | 'builder';
+type Tab = 'analyzer' | 'builder' | 'trading';
 type Mode = 'backend' | 'local';
 
 interface BuilderState {
@@ -71,7 +72,7 @@ function viewFromBackend(res: ExplainResponse): ViewModel {
     sideRaw: byTag(54)?.value ?? '',
     quantity: byTag(38)?.value ?? '—',
     orderType: byTag(40)?.decoded ?? '—',
-    price: byTag(44) ? `$${byTag(44)!.value}` : '—',
+    price: byTag(44) ? byTag(44)!.value : '—',
     fields,
   };
 }
@@ -91,7 +92,7 @@ function viewFromLocal(parsed: ParseResult): ViewModel {
     sideRaw: parsed.byTag[54]?.rawValue ?? '',
     quantity: parsed.byTag[38]?.rawValue ?? '—',
     orderType: parsed.byTag[40]?.decoded ?? '—',
-    price: parsed.byTag[44] ? `$${parsed.byTag[44].rawValue}` : '—',
+    price: parsed.byTag[44] ? parsed.byTag[44].rawValue : '—',
     fields,
   };
 }
@@ -144,7 +145,7 @@ export default function App() {
       setError('');
     } catch (e) {
       if (requestId !== requestIdRef.current) return;
-      if (e instanceof ApiError && e.status >= 400 && e.status < 500) {
+      if (e instanceof ApiError) {
         // The backend rejected the message itself; show its error verbatim.
         clearResults();
         setError(e.message);
@@ -278,11 +279,13 @@ export default function App() {
           >
             Order Builder
           </button>
+          <button className={tab === 'trading' ? 'tab active' : 'tab'} onClick={() => setTab('trading')}>Trading Flow</button>
         </nav>
       </header>
 
       <div className="content-row">
         <div className="main-col">
+      {tab === 'trading' && <TradingDashboard />}
       {tab === 'analyzer' && (
         <main>
           <section className="card">

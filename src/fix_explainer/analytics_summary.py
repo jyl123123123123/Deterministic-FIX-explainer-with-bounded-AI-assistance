@@ -19,7 +19,8 @@ def aggregate_catalog(report):
 
     add('/data_scope', 'These statistics describe connected FIX sessions only, not the entire market.')
     add('/sources', 'Data sources: ' + (', '.join(report['sources']) or 'no events in this window') + '.')
-    add('/window_end', f"The event-time window ends at {report['window_end']} and spans {report['window_seconds']} seconds.")
+    add('/window_end', f"The event-time window ends at {report['window_end']}.")
+    add('/window_seconds', f"The event-time window spans {report['window_seconds']} seconds.")
     add('/total_executions', f"There are {report['total_executions']} reported fills in this window.")
     add('/total_orders', f"There are {report['total_orders']} new order requests; requests do not establish execution.")
     # Fixed bound: at most ten instruments, deterministically ordered by symbol/currency.

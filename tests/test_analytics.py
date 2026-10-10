@@ -161,3 +161,20 @@ def test_synthetic_fill_totals_match_correlated_quantities():
             (o.notional for o in service.correlator.orders_by_cl_ord_id.values()), Decimal(0))
     finally:
         service.close()
+
+
+def test_conflicting_metadata_rejected_before_order_mutation():
+    from fix_explainer.events import EventType, EventSource, Side, TradingEvent
+    from fix_explainer.correlation import OrderCorrelator
+    from fix_explainer.message import split_message
+    analytics = TradingAnalytics()
+    bridge = AnalyticsBridge(analytics)
+    correlator = OrderCorrelator()
+    order = TradingEvent('order', STAMP, 'AAPL', Side.BUY, EventType.ORDER_NEW,
+                         None, None, 'order', EventSource.SIMULATED, cl_ord_id='client')
+    correlator.apply(order, order_qty=100)
+    fill = replace(order, event_id='fill', event_type=EventType.TRADE, last_qty=10,
+                   last_px=Decimal('1'), exec_id='fill')
+    assert not bridge.accept_event(fill, correlator, split_message(b'35=8\x0155=TSLA\x0154=1\x01'))
+    assert correlator.orders_by_cl_ord_id['client'].cum_qty == 0
+    assert not correlator.seen_exec_ids

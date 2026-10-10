@@ -1,0 +1,27 @@
+<repository version="1.0">
+  <codeSets>
+    <codeSet name="Side">
+      <code value="1" name="Buy" />
+      <code value="2" name="Sell" />
+    </codeSet>
+    <codeSet name="OrdType">
+      <code value="2" name="Limit" />
+    </codeSet>
+  </codeSets>
+  <fields>
+    <field id="11" name="ClOrdID" type="String" />
+    <field id="38" name="OrderQty" type="Qty" />
+    <field id="40" name="OrdType" type="char" codeSet="OrdType" />
+    <field id="54" name="Side" type="char" codeSet="Side" />
+    <field id="55" name="Symbol" type="String" />
+  </fields>
+  <messages>
+    <message name="NewOrderSingle" msgType="D">
+      <field name="ClOrdID" required="true" />
+      <field name="Symbol" required="true" />
+      <field name="Side" required="true" />
+      <field name="OrderQty" required="true" />
+      <field name="OrdType" required="true" />
+    </message>
+  </messages>
+</repository>

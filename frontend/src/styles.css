@@ -849,3 +849,17 @@ body {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* Trading controls and metrics share the established dark theme. */
+.trading-dashboard > h3 { margin: 24px 0 12px; }
+.trading-dashboard .card { margin-bottom: 18px; }
+.trading-dashboard button, .trading-dashboard select {
+  padding: 9px 12px; margin: 5px 4px 5px 0; border: 1px solid #475569;
+  border-radius: 8px; background: #17212d; color: #e2e8f0; font: inherit;
+}
+.trading-dashboard button { cursor: pointer; }
+.trading-dashboard button:hover:enabled { border-color: #34d399; }
+.trading-dashboard button:disabled { opacity: .45; cursor: default; }
+.trading-dashboard pre { font-size: 13px; line-height: 1.6; }
+.trading-dashboard svg { background: rgba(15, 23, 42, .8); border-radius: 8px; }
+.trading-dashboard p[role="alert"] { color: #fca5a5; }

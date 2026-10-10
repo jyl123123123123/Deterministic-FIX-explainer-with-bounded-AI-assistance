@@ -15,6 +15,11 @@ def main():
     with socket.socket() as probe:
         if probe.connect_ex(('127.0.0.1', 8000)) == 0:
             raise SystemExit('Port 8000 is already in use. Stop the existing API server first.')
+    if os.environ.get('FIX_ENABLE_AI') != '1':
+        import uvicorn
+        print('Starting API with AI disabled. No key required.')
+        uvicorn.run('fix_explainer.api:app', host='127.0.0.1', port=8000)
+        return
     if not os.environ.get('GEMINI_API_KEY'):
         if not sys.stdin.isatty():
             raise SystemExit('Run in an interactive terminal or set GEMINI_API_KEY first.')
@@ -39,7 +44,7 @@ def main():
         raise SystemExit('Invalid model ID. Use the gemini-... API model identifier.')
     import uvicorn
     print('Starting API at http://127.0.0.1:8000. Credentials stay in process memory.')
-    print('In the web UI, select Gemini API, then Analyze Message. Ctrl+C stops the API.')
+    print('Open Trading Flow and request Gemini summary. Ctrl+C stops the API.')
     try:
         uvicorn.run('fix_explainer.api:app', host='127.0.0.1', port=8000)
     finally:

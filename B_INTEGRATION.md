@@ -162,7 +162,7 @@ Catalogs are limited to 128 entries; catalog and response sizes are bounded at 1
 
 The regression suite covers disclosure filtering, input immutability, repeated-tag references, missing-field findings, output rejection, fallback preservation, configuration, socket timeout, oversized responses, and HTTP error handling. Run `python -m pytest` for the current results.
 
-A real Gemini demo call has also completed successfully without fallback during integration. That confirms one working configuration, not future model availability, quota, or service behavior.
+The upgraded aggregate Gemini path is verified with mocked transport. A local live aggregate check was attempted and returned AI_FAILED_AITransportError with a deterministic template fallback. Successful live Gemini integration remains unverified; diagnose the sanitized HTTP/network failure before the demo.
 
 The supported scope is single-message bounded explanation. Free-form question answering, sequence correlation, repeating-group validation, a full FIX dictionary, and a web interface remain outside this layer's scope.
 
@@ -190,10 +190,7 @@ Start the API in another terminal from the repository root:
 .venv/bin/python examples/start_api.py
 ```
 
-The launcher uses existing GEMINI_API_KEY/GEMINI_MODEL environment variables or
-prompts for them. The API key prompt is hidden. It does not save credentials to disk.
-Keep this terminal running; Ctrl+C stops the API. Select **Gemini API** under
-**Server explanation** in the browser, then click **Analyze Message**.
+The launcher starts without credentials by default. Set FIX_ENABLE_AI=1 before starting to enable secure key/model prompts. Keep this terminal running; Ctrl+C stops the API. Open **Trading Flow** and explicitly request **Gemini summary**.
 The local API returns original deterministic fields to the browser; use it only
 in a trusted local session. A displayed fallback means Gemini did not succeed.
 
@@ -218,8 +215,7 @@ messages, ambiguous duplicate tags, trade corrections/cancellations, and
 correlation failures are excluded. Validation findings remain separate from AI.
 
 The demo is one connected synthetic session per process. A's correlator has
-process-wide order/ExecID namespaces: restart before starting an independent
-replay with reused IDs. The standalone B ledger supports session-scoped IDs, but
+process-wide order/ExecID namespaces: the API now resets order and analytics state before each independent replay. The standalone B ledger supports session-scoped IDs, but
 this does not upgrade A's correlator to a production multi-session engine.
 Corrections are excluded, not applied retroactively; snapshots are not an audited
 corrected trading book. Currency is UNSPECIFIED when absent; never label it USD.
@@ -238,8 +234,7 @@ Python 3.11+ is required. No Gemini call is made by the offline demo or tests.
 
 ### API for C
 
-Start the **FastAPI** backend (the older `server/api_server.py` decoder server does
-not provide these analytics endpoints):
+Start the **FastAPI** backend (`server/api_server.py` now launches the same application):
 
 ```bash
 .venv/bin/python -m uvicorn fix_explainer.api:app --host 127.0.0.1 --port 8000
@@ -274,8 +269,7 @@ capacity; it is in memory, independently of A's SQLite raw storage.
 
 The existing `/api/trading/snapshot` and WebSocket remain A's legacy output.
 Use `/api/analytics/snapshot` for B's fill counts and monetary statistics.
-C's current frontend is not automatically converted into a trading dashboard by
-this backend change; C must connect the new endpoints and render the fields.
+The Trading Flow frontend now polls these endpoints and renders rankings, demand, fills, replay controls, and cited summaries.
 
 ### Optional bounded Gemini aggregate summaries
 
@@ -293,8 +287,7 @@ No automatic/background AI requests are scheduled. Only explicit `ai=true`
 summary requests may call Gemini. Limit: 20 attempts per backend process, at least
 10 seconds between attempts; failures consume attempts, no automatic retries.
 Restarting resets the budget. Cache hits for identical snapshots reuse successful
-summaries (up to 32 cached snapshots). These controls apply to **aggregate summary
-calls**, not existing decoder AI calls or frontend ChatPanel calls. Enabled API
+summaries (up to 32 cached snapshots). The aggregate and decoder endpoints share this budget. Unrestricted browser ChatPanel calls have been removed. Enabled API
 calls can incur provider charges; leave aggregate AI disabled for a no-call demo.
 
 Gemini receives only approved aggregate wording and snapshot metric citations,
@@ -312,3 +305,23 @@ budgets, transport failures, and invalid selections return a cited deterministic
 summary with a sanitized reason. Counts and validation findings are unchanged.
 The Gemini network path is covered by mocked transport tests; live account access
 and quota must be checked separately with an explicitly enabled call.
+
+
+## Full-stack integration update
+
+FastAPI is the canonical backend. `/api/explain` returns browser-compatible flat
+fields and retains the legacy `explanation` envelope. The old stdlib server script
+now launches FastAPI. HTTP errors and contract mismatches are shown by the browser.
+
+Each `/api/trading/start` resets the correlator, storage, and analytics ledger after
+checking no RUNNING/PAUSED run exists. It does not reset Gemini's process budget.
+`GET /api/trading/active` lets a refreshed browser reconnect to the current run.
+`POST /api/trading/runs/{id}/pause`, `/resume`, and `/stop` control replay;
+optional `rate=10..100` on pause/resume adjusts the rate. The UI polls once per
+second, renders instrument rankings per currency, recent fill-count trends,
+findings, and cited summaries with their exact snapshot evidence.
+
+The old unrestricted ChatPanel has been replaced with guidance to bounded backend
+summaries. There is no browser API-key form or direct browser model call. Package
+resources now include the FIX subset XML so the API does not depend on a deployed
+tests directory. The dictionary remains a limited subset, not full FIX coverage.

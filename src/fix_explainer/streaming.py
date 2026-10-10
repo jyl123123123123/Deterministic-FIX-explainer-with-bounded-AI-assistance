@@ -39,6 +39,7 @@ class StreamRun:
     error: str | None = None
     _task: asyncio.Task[None] | None = field(default=None, repr=False)
     _stop_requested: bool = field(default=False, repr=False)
+    _rate: int | None = field(default=None, repr=False)
 
     def snapshot(self) -> dict[str, object]:
         return {
@@ -46,7 +47,7 @@ class StreamRun:
             "status": self.status,
             "processed": self.processed,
             "total_messages": self.config.count,
-            "rate": self.config.rate,
+            "rate": self._rate or self.config.rate,
             "seed": self.config.seed,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
@@ -64,7 +65,7 @@ class StreamSimulator:
     def start(self, config: StreamConfig | None = None) -> StreamRun:
         """Start one replay task; reject a second concurrent run."""
         config = config or StreamConfig()
-        if any(run.status == "RUNNING" for run in self._runs.values()):
+        if any(run.status in ("RUNNING", "PAUSED") for run in self._runs.values()):
             raise RuntimeError("a stream run is already active")
         run = StreamRun(run_id=f"run-{uuid4().hex[:12]}", config=config)
         run.status = "RUNNING"
@@ -75,10 +76,21 @@ class StreamSimulator:
 
     async def stop(self, run_id: str) -> StreamRun:
         run = self._get_run(run_id)
-        if run.status == "RUNNING":
+        if run.status in ("RUNNING", "PAUSED"):
             run._stop_requested = True
             if run._task is not None:
                 await run._task
+        return run
+
+    def control(self, run_id: str, action: str, rate: int | None = None) -> StreamRun:
+        run = self._get_run(run_id)
+        if run.status not in ("RUNNING", "PAUSED"):
+            raise ValueError("Run is no longer active")
+        if rate is not None:
+            if not 10 <= rate <= 100:
+                raise ValueError("Rate must be between 10 and 100")
+            run._rate = rate
+        run.status = "PAUSED" if action == "pause" else "RUNNING"
         return run
 
     async def wait(self, run_id: str) -> StreamRun:
@@ -104,6 +116,8 @@ class StreamSimulator:
                 start_time=run.started_at,
             )
             for message in messages:
+                while run.status == "PAUSED" and not run._stop_requested:
+                    await asyncio.sleep(0.05)
                 if run._stop_requested:
                     run.status = "STOPPED"
                     break
@@ -111,7 +125,7 @@ class StreamSimulator:
                 if inspect.isawaitable(result):
                     await result
                 run.processed += 1
-                await asyncio.sleep(1 / run.config.rate)
+                await asyncio.sleep(1 / (run._rate or run.config.rate))
             else:
                 run.status = "COMPLETED"
         except asyncio.CancelledError:
