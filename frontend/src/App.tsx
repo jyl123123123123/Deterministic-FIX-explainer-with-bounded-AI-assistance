@@ -19,6 +19,7 @@ type ExplanationMode = 'template' | 'ai';
 interface ApiExplanation {
   provider_summary: string;
   fallback_used: boolean;
+  fallback_reason?: string | null;
 }
 
 function formatUtcTimestamp(d: Date): string {
@@ -293,7 +294,10 @@ export default function App() {
                 <section>
                   <h2 className="section-title">Server Explanation</h2>
                   <div className="card explanation-card">
-                    <p className="explanation-text">{apiExplanation.provider_summary}</p>
+                    <p className="explanation-text" style={{ whiteSpace: 'pre-wrap' }}>{apiExplanation.provider_summary}</p>
+                    {apiExplanation.fallback_used && apiExplanation.fallback_reason && (
+                      <p className="error">{apiExplanation.fallback_reason}</p>
+                    )}
                     <p className="hint">
                       {apiExplanation.fallback_used
                         ? 'The server used its deterministic fallback.'
