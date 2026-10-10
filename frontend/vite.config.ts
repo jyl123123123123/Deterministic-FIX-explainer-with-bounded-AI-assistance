@@ -6,6 +6,7 @@ export default defineConfig(({ command, mode }) => ({
   // GitHub Pages project site path; dev server stays at / for convenience.
   base: command === 'build' ? '/Deterministic-FIX-explainer-with-bounded-AI-assistance/' : '/',
   server: {
+    allowedHosts: ['.trycloudflare.com'],
     proxy: {
       '/api': loadEnv(mode, '.', 'VITE_').VITE_API_TARGET || 'http://127.0.0.1:8000',
     },
