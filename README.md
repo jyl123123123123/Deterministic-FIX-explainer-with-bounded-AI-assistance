@@ -61,11 +61,15 @@ of 20 attempts per process and a minimum interval of 10 seconds. Failures consum
 attempts; no automatic retries. Successful identical aggregate snapshots are
 cached. Failure/disabled/budget responses return a deterministic explanation.
 
-Unrestricted browser chat and browser key entry have been removed. Keys formerly
-saved by an older frontend can be removed via the browser's site storage controls;
-this version never reads or uses them. A frontend-only GitHub Pages deployment
-cannot run the Python statistics or server-side Gemini; use local full-stack demo
-or deploy the backend separately with appropriate access controls.
+Browser key entry has been removed. The **Gemini Analyst** panel's free-form
+chat is served by the backend: with AI enabled it relays turns to Gemini via
+`POST /api/chat` (same 20-calls-per-process budget and 10-second minimum
+interval as summaries); with AI disabled it returns an explicit 503. Keys
+formerly saved by an older frontend can be removed via the browser's site
+storage controls; this version never reads or uses them. A frontend-only
+GitHub Pages deployment cannot run the Python statistics or server-side
+Gemini; use local full-stack demo or deploy the backend separately with
+appropriate access controls.
 
 ## Verification
 

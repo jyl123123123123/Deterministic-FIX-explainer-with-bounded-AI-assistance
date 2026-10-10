@@ -3,7 +3,10 @@
 from pathlib import Path
 import asyncio
 import os
+import re
 from datetime import datetime
+from threading import Lock
+from time import monotonic
 from .analytics import TradingAnalytics
 from .analytics_bridge import AnalyticsBridge
 from .analytics_summary import TradingSummaryService
@@ -13,7 +16,12 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .ai import GeminiExplanationProvider
+from .ai import (
+    AIOutputError,
+    AITransportError,
+    GeminiExplanationProvider,
+    gemini_transport,
+)
 from .explainer import explain_with_provider
 from .integrity import validate_integrity
 from .schema import validate_message_schema
@@ -28,6 +36,20 @@ from .trading import TradingDataService
 class ExplainRequest(BaseModel):
     message: str = Field(min_length=1, max_length=128 * 1024)
     mode: Literal["template", "ai"] = "template"
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "model"]
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    provider: str
 
 
 class ExplainResponse(BaseModel):
@@ -82,6 +104,101 @@ class BudgetedMessageProvider:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+CHAT_SYSTEM_INSTRUCTION = (
+    "You are a helpful assistant embedded in FIX Insight, a FIX protocol "
+    "message analyzer. Answer concisely. You may answer in the user's language."
+)
+CHAT_MAX_TOTAL_CHARS = 64 * 1024
+CHAT_TIMEOUT_SECONDS = 20
+
+
+class ChatRateLimiter:
+    """Same parameters as the summary AI budget: 20 calls per process, 10s apart."""
+
+    def __init__(self, max_calls: int = 20, interval: float = 10, clock=monotonic):
+        self.max_calls, self.interval = max_calls, interval
+        self.clock, self.calls, self.last_call = clock, 0, None
+        self.lock = Lock()
+
+    def check(self) -> str | None:
+        """Consume one call slot, or return a reason token if not allowed."""
+        with self.lock:
+            if self.calls >= self.max_calls:
+                return "AI_BUDGET_EXHAUSTED"
+            if self.last_call is not None and self.clock() - self.last_call < self.interval:
+                return "AI_RATE_LIMITED"
+            self.calls += 1
+            self.last_call = self.clock()
+            return None
+
+
+chat_limiter = ChatRateLimiter()
+
+
+@app.post("/api/chat", response_model=ChatResponse)
+def chat(request: ChatRequest) -> ChatResponse:
+    """Server-side Gemini chat; the browser never sees credentials."""
+    if os.environ.get("FIX_ENABLE_AI") != "1":
+        raise HTTPException(
+            status_code=503,
+            detail="AI chat is not enabled on this server (set FIX_ENABLE_AI=1 with GEMINI_API_KEY and GEMINI_MODEL).",
+        )
+    model = os.environ.get("GEMINI_MODEL", "")
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if (
+        not isinstance(model, str)
+        or not re.fullmatch(r"gemini-[A-Za-z0-9._-]{1,100}", model)
+        or not key.strip()
+        or "\n" in key
+        or "\r" in key
+    ):
+        raise HTTPException(status_code=503, detail="AI chat is not configured on this server.")
+    if sum(len(m.text) for m in request.messages) > CHAT_MAX_TOTAL_CHARS:
+        raise HTTPException(status_code=400, detail="Conversation is too long (64 KiB total).")
+    limited = chat_limiter.check()
+    if limited == "AI_BUDGET_EXHAUSTED":
+        raise HTTPException(status_code=429, detail="AI call budget exhausted for this server process.")
+    if limited is not None:
+        raise HTTPException(status_code=429, detail="AI rate limit: please retry in a few seconds.")
+
+    # Normalize for Gemini multi-turn: drop leading model messages and merge
+    # consecutive same-role messages.
+    contents: list[dict] = []
+    for message in request.messages:
+        if not contents and message.role == "model":
+            continue
+        if contents and contents[-1]["role"] == message.role:
+            contents[-1]["parts"][0]["text"] += "\n" + message.text
+        else:
+            contents.append({"role": message.role, "parts": [{"text": message.text}]})
+    if not contents:
+        raise HTTPException(status_code=400, detail="At least one user message is required.")
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": CHAT_SYSTEM_INSTRUCTION}]},
+        "contents": contents,
+    }
+    try:
+        reply = gemini_transport(model, key, payload, CHAT_TIMEOUT_SECONDS)
+    except AITransportError as error:
+        match = re.search(r"HTTP (\d+)", str(error))
+        upstream = int(match.group(1)) if match else None
+        if upstream in (401, 403):
+            detail = "The server Gemini API key was rejected."
+        elif upstream == 404:
+            detail = "The configured Gemini model is unavailable."
+        elif upstream == 429:
+            raise HTTPException(status_code=429, detail="Gemini rate limit reached; retry later.") from error
+        else:
+            detail = "Gemini request failed."
+        raise HTTPException(status_code=502, detail=detail) from error
+    except AIOutputError as error:
+        raise HTTPException(status_code=502, detail="Gemini returned an unusable reply.") from error
+    if not reply.strip():
+        raise HTTPException(status_code=502, detail="Gemini returned an empty reply.")
+    return ChatResponse(reply=reply, provider="gemini")
 
 
 @app.get("/api/analytics/snapshot")

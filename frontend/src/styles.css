@@ -760,75 +760,7 @@ body {
   }
 }
 
-/* Chat settings + Gemini connection states */
-
-.chat-badge-connected {
-  color: var(--green);
-  border-color: rgba(63, 185, 80, 0.5);
-  background: rgba(63, 185, 80, 0.1);
-}
-
-.chat-settings {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.chat-settings-row {
-  display: flex;
-  gap: 8px;
-}
-
-.chat-settings-input {
-  flex: 1;
-  min-width: 0;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  font-size: 13px;
-  padding: 8px 10px;
-  outline: none;
-}
-
-.chat-settings-input:focus {
-  border-color: var(--accent);
-}
-
-.chat-settings-note {
-  margin: 2px 0 0;
-  font-size: 11px;
-  color: var(--text-dim);
-  line-height: 1.5;
-}
-
-.chat-settings-save {
-  padding: 8px 16px;
-}
-
-.icon-btn {
-  white-space: nowrap;
-}
-
-.chat-status-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.chat-status-text {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* Chat error bubbles */
 
 .chat-bubble.error {
   align-self: flex-start;
@@ -836,23 +768,6 @@ body {
   border: 1px solid rgba(248, 81, 73, 0.45);
   color: #ffb3ad;
   border-bottom-left-radius: 4px;
-}
-
-.chat-hint {
-  margin: 0;
-  padding: 8px 14px;
-  font-size: 12px;
-  color: var(--text-dim);
-  border-top: 1px solid var(--border);
-}
-
-.chat-hint a {
-  color: var(--accent);
-}
-
-.chat-input:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 /* Trading controls and metrics share the established dark theme. */

@@ -74,3 +74,60 @@ def test_api_stream_controls_and_new_run_reset():
         assert connected.post(f"/api/trading/runs/{second['run_id']}/pause").status_code == 200
         assert connected.post(f"/api/trading/runs/{second['run_id']}/resume").json()['status'] == 'RUNNING'
         connected.post(f"/api/trading/runs/{second['run_id']}/stop")
+
+
+def test_chat_endpoint_returns_backend_reply(monkeypatch):
+    import fix_explainer.api as api
+
+    monkeypatch.setenv('FIX_ENABLE_AI', '1')
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-key')
+    monkeypatch.setenv('GEMINI_MODEL', 'gemini-flash-latest')
+    monkeypatch.setattr(api.chat_limiter, 'calls', 0)
+    monkeypatch.setattr(api.chat_limiter, 'last_call', None)
+
+    def fake_transport(model, key, payload, timeout):
+        assert model == 'gemini-flash-latest'
+        assert payload['systemInstruction']['parts'][0]['text']
+        assert payload['contents'] == [
+            {'role': 'user', 'parts': [{'text': 'Hello'}]},
+            {'role': 'model', 'parts': [{'text': 'Hi!'}]},
+            {'role': 'user', 'parts': [{'text': 'What is FIX?'}]},
+        ]
+        return 'Mock Gemini reply.'
+
+    monkeypatch.setattr(api, 'gemini_transport', fake_transport)
+    response = client.post('/api/chat', json={'messages': [
+        {'role': 'user', 'text': 'Hello'},
+        {'role': 'model', 'text': 'Hi!'},
+        {'role': 'user', 'text': 'What is FIX?'},
+    ]})
+
+    assert response.status_code == 200
+    assert response.json() == {'reply': 'Mock Gemini reply.', 'provider': 'gemini'}
+
+
+def test_chat_endpoint_requires_ai_enabled(monkeypatch):
+    monkeypatch.setenv('FIX_ENABLE_AI', '0')
+    response = client.post('/api/chat', json={'messages': [{'role': 'user', 'text': 'Hello'}]})
+
+    assert response.status_code == 503
+    assert 'not enabled' in response.json()['detail']
+
+
+def test_chat_endpoint_enforces_request_limits(monkeypatch):
+    monkeypatch.setenv('FIX_ENABLE_AI', '1')
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-key')
+    monkeypatch.setenv('GEMINI_MODEL', 'gemini-flash-latest')
+
+    too_many = [{'role': 'user', 'text': 'hi'}] * 41
+    assert client.post('/api/chat', json={'messages': too_many}).status_code == 422
+
+    too_long = [{'role': 'user', 'text': 'x' * 4001}]
+    assert client.post('/api/chat', json={'messages': too_long}).status_code == 422
+
+    big_total = [
+        {'role': 'user' if i % 2 == 0 else 'model', 'text': 'x' * 4000}
+        for i in range(17)
+    ]
+    response = client.post('/api/chat', json={'messages': big_total})
+    assert response.status_code == 400
