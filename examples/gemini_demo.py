@@ -40,6 +40,9 @@ def main():
     else:
         provider = TemplateExplanationProvider()
     result = explain_with_provider(message, provider, specification, errors)
+    mode = 'Gemini API' if args.ai else 'Mock Gemini' if args.mock else 'Local template'
+    print('Requested mode:', mode)
+    print('Explanation source:', 'Deterministic fallback' if result['fallback_used'] else mode)
     # Do not print original context or diagnostic text to console logs.
     print(result['provider_summary'])
     if result['fallback_used']:
