@@ -170,3 +170,39 @@ The supported scope is single-message bounded explanation. Free-form question an
 
 - [Gemini structured outputs](https://ai.google.dev/gemini-api/docs/structured-output)
 - [Google GenerateContent API definition](https://github.com/googleapis/googleapis/blob/master/google/ai/generativelanguage/v1beta/generative_service.proto)
+
+
+## Local browser API
+
+The web UI calls `POST /api/explain` through Vite's proxy to `127.0.0.1:8000`.
+Install the package and test dependencies in `.venv` using the setup above.
+Start the frontend in one terminal:
+
+```sh
+cd frontend
+npm ci
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+Start the API in another terminal from the repository root:
+
+```sh
+.venv/bin/python examples/start_api.py
+```
+
+The launcher uses existing GEMINI_API_KEY/GEMINI_MODEL environment variables or
+prompts for them. The API key prompt is hidden. It does not save credentials to disk.
+Keep this terminal running; Ctrl+C stops the API. Select **Gemini API** under
+**Server explanation** in the browser, then click **Analyze Message**.
+The local API returns original deterministic fields to the browser; use it only
+in a trusted local session. A displayed fallback means Gemini did not succeed.
+
+For template-only use without credentials:
+
+```sh
+.venv/bin/python -m uvicorn fix_explainer.api:app --host 127.0.0.1 --port 8000
+```
+
+Do not run both API commands simultaneously. The health endpoint is
+`http://127.0.0.1:8000/api/health`. The current API loads the fixture specification
+subset, so schema findings are limited to that subset.
