@@ -267,13 +267,6 @@ export default function ChatPanel() {
           <button
             className="btn btn-secondary"
             disabled={summaryLoading !== null}
-            onClick={() => void summarize(false)}
-          >
-            {summaryLoading === 'template' ? 'Summarizing…' : 'Template Summary'}
-          </button>
-          <button
-            className="btn btn-secondary"
-            disabled={summaryLoading !== null}
             onClick={() => void summarize(true)}
           >
             {summaryLoading === 'gemini' ? 'Summarizing…' : 'Gemini Summary'}
