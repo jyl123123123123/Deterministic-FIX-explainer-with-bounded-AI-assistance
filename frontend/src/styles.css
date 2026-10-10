@@ -758,10 +758,6 @@ body {
   .chat-messages {
     min-height: 140px;
   }
-
-  .chat-summary-text {
-    max-height: 90px;
-  }
 }
 
 /* Chat settings + Gemini connection states */
@@ -880,7 +876,7 @@ body {
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .chat-summary-actions {
@@ -889,29 +885,10 @@ body {
   flex-wrap: wrap;
 }
 
-.chat-summary-error {
+.chat-summary-hint {
   margin: 0;
-  font-size: 12px;
-  color: var(--red);
-}
-
-.chat-summary-result {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-}
-
-.chat-summary-text {
-  margin: 0;
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 140px;
-  overflow-y: auto;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 .chat-summary-meta {
@@ -924,4 +901,70 @@ body {
 .chat-summary-meta .badge {
   font-size: 11px;
   padding: 3px 10px;
+}
+
+/* Summary bubbles inside the message flow */
+
+.chat-bubble.summary {
+  background: rgba(63, 185, 80, 0.06);
+  border-color: rgba(63, 185, 80, 0.3);
+}
+
+.summary-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.summary-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--green);
+}
+
+.summary-close {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.summary-close:hover {
+  color: var(--red);
+}
+
+.summary-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.citations-toggle {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 0;
+  margin-top: 8px;
+  text-align: left;
+}
+
+.citations-toggle:hover {
+  text-decoration: underline;
+}
+
+.citation-list {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  word-break: break-all;
 }
