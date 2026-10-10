@@ -22,6 +22,12 @@ interface GeminiResponse {
   candidates?: Array<{ content?: { parts?: GeminiPart[] } }>;
 }
 
+interface SummaryResponse {
+  summary: string;
+  provider: string;
+  fallback_reason: string | null;
+}
+
 async function callGemini(
   apiKey: string,
   model: string,
@@ -94,6 +100,9 @@ export default function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [typing, setTyping] = useState(false);
+  const [summary, setSummary] = useState<SummaryResponse | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState<'template' | 'gemini' | null>(null);
+  const [summaryError, setSummaryError] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
   const alive = useRef(true);
@@ -165,10 +174,34 @@ export default function ChatPanel() {
     }
   };
 
+  // Server-side trading-flow summary (no browser API key needed; the backend
+  // decides between the template provider and Gemini via its environment).
+  const summarize = async (ai: boolean) => {
+    setSummaryLoading(ai ? 'gemini' : 'template');
+    setSummaryError('');
+    try {
+      const resp = await fetch(`/api/analytics/summary?ai=${ai}`, { method: 'POST' });
+      const data: unknown = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        const detail =
+          data && typeof data === 'object' && 'detail' in data && typeof data.detail === 'string'
+            ? data.detail
+            : `HTTP ${resp.status}`;
+        throw new Error(detail);
+      }
+      setSummary(data as SummaryResponse);
+    } catch (e) {
+      setSummary(null);
+      setSummaryError(e instanceof Error ? e.message : 'Summary request failed.');
+    } finally {
+      setSummaryLoading(null);
+    }
+  };
+
   return (
     <section className="card chat-card">
       <div className="chat-header">
-        <h2>Gemini Chat</h2>
+        <h2>Gemini Analyst</h2>
         {apiKey ? (
           <span className="chat-badge chat-badge-connected">Connected (your key)</span>
         ) : (
@@ -228,6 +261,37 @@ export default function ChatPanel() {
           </button>
         </div>
       )}
+
+      <div className="chat-summary">
+        <div className="chat-summary-actions">
+          <button
+            className="btn btn-secondary"
+            disabled={summaryLoading !== null}
+            onClick={() => void summarize(false)}
+          >
+            {summaryLoading === 'template' ? 'Summarizing…' : 'Template Summary'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            disabled={summaryLoading !== null}
+            onClick={() => void summarize(true)}
+          >
+            {summaryLoading === 'gemini' ? 'Summarizing…' : 'Gemini Summary'}
+          </button>
+        </div>
+        {summaryError && <p className="chat-summary-error">{summaryError}</p>}
+        {summary && (
+          <div className="chat-summary-result">
+            <pre className="chat-summary-text">{summary.summary}</pre>
+            <div className="chat-summary-meta">
+              <span className="badge badge-ok">Provider: {summary.provider}</span>
+              {summary.fallback_reason && (
+                <span className="badge badge-warn">Fallback — {summary.fallback_reason}</span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="chat-messages" ref={listRef}>
         {messages.length === 0 && !typing && (

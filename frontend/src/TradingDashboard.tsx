@@ -2,7 +2,6 @@ import {useEffect, useState} from 'react';
 type Row = {symbol: string; currency: string; buy_order_qty: number; sell_order_qty: number; buy_fill_qty: number; sell_fill_qty: number; buy_notional: string; sell_notional: string; gross_notional: string};
 type Report = {snapshot_id: string; window_start: string; window_end: string; total_orders: number; total_executions: number; symbols: Row[]; currency_totals: {currency: string; gross_notional: string}[]; findings: Record<string, number>; anomalies: {symbol: string; side: string; previous: number; current: number}[]};
 type Run = {run_id: string; status: string; processed: number; total_messages: number; rate: number};
-type Summary = {summary: string; provider: string; fallback_reason: string | null; report: Report};
 async function request<T>(path: string, method = 'GET'): Promise<T> {
  const response = await fetch(path, {method}); const data = await response.json();
  if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `HTTP ${response.status}`);
@@ -17,7 +16,6 @@ export default function TradingDashboard() {
  const [report, setReport] = useState<Report | null>(null), [run, setRun] = useState<Run | null>(null);
  const [trend, setTrend] = useState<number[]>([]);
  const [rate, setRate] = useState(25), [error, setError] = useState(''), [busy, setBusy] = useState(false);
- const [summary, setSummary] = useState<Summary | null>(null);
  const [sort, setSort] = useState<'buy_notional' | 'sell_notional' | 'gross_notional'>('gross_notional');
  useEffect(() => {
   let alive = true; let timer: ReturnType<typeof setTimeout>;
@@ -34,14 +32,9 @@ export default function TradingDashboard() {
  const act = async (action: string) => {
   setBusy(true); setError('');
   try {
-   if (action === 'start') {setRun(await request<Run>(`/api/trading/start?count=1500&rate=${rate}`, 'POST')); setSummary(null); setTrend([]);}
+   if (action === 'start') {setRun(await request<Run>(`/api/trading/start?count=1500&rate=${rate}`, 'POST')); setTrend([]);}
    else if (run) setRun(await request<Run>(`/api/trading/runs/${run.run_id}/${action}?rate=${rate}`, 'POST'));
   } catch(e) {setError(e instanceof Error ? e.message : 'Request failed');} finally {setBusy(false);}
- };
- const summarize = async (ai: boolean) => {
-  setBusy(true); setError('');
-  try {setSummary(await request<Summary>(`/api/analytics/summary?ai=${ai}`, 'POST'));}
-  catch(e) {setError(e instanceof Error ? e.message : 'Summary failed');} finally {setBusy(false);}
  };
  const active = run && ['RUNNING', 'PAUSED'].includes(run.status);
  const rows = [...(report?.symbols ?? [])].sort((a,b) => a.currency.localeCompare(b.currency) || compareDecimal(a[sort],b[sort]) || a.symbol.localeCompare(b.symbol));
@@ -65,8 +58,6 @@ export default function TradingDashboard() {
  <h3>Instrument rankings (within each currency)</h3><select aria-label="Rank instruments" value={sort} onChange={e => setSort(e.target.value as typeof sort)}><option value="gross_notional">Gross value</option><option value="buy_notional">Top bought</option><option value="sell_notional">Top sold</option></select>
  <div className="card table-card"><table className="evidence-table"><thead><tr>{['Symbol','Currency','Buy demand qty','Sell demand qty','Buy fill qty','Sell fill qty','Buy value','Sell value'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map(r => <tr key={`${r.symbol}-${r.currency}`}><td>{r.symbol}</td><td>{r.currency}</td><td>{r.buy_order_qty}</td><td>{r.sell_order_qty}</td><td>{r.buy_fill_qty}</td><td>{r.sell_fill_qty}</td><td>{r.buy_notional}</td><td>{r.sell_notional}</td></tr>)}</tbody></table></div>
  <h3>Window comparisons</h3>{report.anomalies.length ? report.anomalies.map((a,i) => <p key={i}>{a.symbol} {a.side}: {a.previous} → {a.current} reported fill quantity.</p>) : <p>No threshold crossings.</p>}
- <p>Excluded-event findings: {JSON.stringify(report.findings)}</p>
- <h3>Bounded flow summary</h3><button disabled={busy} onClick={() => void summarize(false)}>Template summary (no API)</button>{' '}<button disabled={busy} onClick={() => void summarize(true)}>Gemini summary (may incur costs)</button><p>No background AI requests. Requires server-side opt-in.</p></>}
- {summary && <div className="card"><p>Provider: {summary.provider} {summary.fallback_reason ?? ''}</p><p>Summary snapshot ends at {summary.report.window_end}; live statistics may have advanced.</p><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{summary.summary}</pre><details><summary>Referenced snapshot evidence</summary><pre style={{whiteSpace:'pre-wrap'}}>{JSON.stringify(summary.report,null,2)}</pre></details></div>}
+ <p>Excluded-event findings: {JSON.stringify(report.findings)}</p></>}
  </main>;
 }
