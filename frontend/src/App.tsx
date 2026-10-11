@@ -192,11 +192,12 @@ export default function App() {
 
   // Lock vertical scroll on the blank initial page (desktop only); unlock as
   // soon as results or an error make the page taller than one viewport.
+  // The Trading Flow tab always needs scrolling, so never lock there.
   const hasResults = Boolean(view || error);
   useEffect(() => {
-    document.body.classList.toggle('no-scroll', !hasResults);
+    document.body.classList.toggle('no-scroll', !hasResults && tab !== 'trading');
     return () => document.body.classList.remove('no-scroll');
-  }, [hasResults]);
+  }, [hasResults, tab]);
 
   const fillSample = (message: string) => {
     setInput(message);
