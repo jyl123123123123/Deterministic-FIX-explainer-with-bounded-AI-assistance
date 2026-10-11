@@ -14,7 +14,6 @@ function compareDecimal(a: string, b: string) {
 }
 export default function TradingDashboard() {
  const [report, setReport] = useState<Report | null>(null), [run, setRun] = useState<Run | null>(null);
- const [trend, setTrend] = useState<number[]>([]);
  const [rate, setRate] = useState(25), [error, setError] = useState(''), [busy, setBusy] = useState(false);
  const [sort, setSort] = useState<'buy_notional' | 'sell_notional' | 'gross_notional'>('gross_notional');
  useEffect(() => {
@@ -23,7 +22,7 @@ export default function TradingDashboard() {
    try {
     const data = await request<Report>('/api/analytics/snapshot');
     const current = await request<Run | null>('/api/trading/active');
-    if (alive) {setReport(data); setRun(current); setTrend(points => [...points.slice(-59), data.total_executions]);}
+    if (alive) {setReport(data); setRun(current);}
    } catch {if (alive) setError('Trading backend unavailable. Start the current Python FastAPI server.');}
    if (alive) timer = setTimeout(poll, 1000);
   };
@@ -32,7 +31,7 @@ export default function TradingDashboard() {
  const act = async (action: string) => {
   setBusy(true); setError('');
   try {
-   if (action === 'start') {setRun(await request<Run>(`/api/trading/start?count=1500&rate=${rate}`, 'POST')); setTrend([]);}
+   if (action === 'start') {setRun(await request<Run>(`/api/trading/start?count=1500&rate=${rate}`, 'POST'));}
    else if (run) setRun(await request<Run>(`/api/trading/runs/${run.run_id}/${action}?rate=${rate}`, 'POST'));
   } catch(e) {setError(e instanceof Error ? e.message : 'Request failed');} finally {setBusy(false);}
  };
@@ -51,10 +50,6 @@ export default function TradingDashboard() {
  <p>5-minute event-time window: {report.window_start} to {report.window_end}</p>
  {report.currency_totals.map(c => <p key={c.currency}>Gross traded value ({c.currency}): {c.gross_notional}</p>)}
  <p>UNSPECIFIED has no implied USD denomination. No FX conversion or contract multiplier.</p></div>
- <h3>Recent reported-fill count (live polling)</h3>
- <svg viewBox="0 0 600 120" role="img" aria-label="Reported-fill count over the last sixty polls" style={{width:'100%',maxHeight:160}}>
- <polyline fill="none" stroke="#34d399" strokeWidth="3" points={trend.map((n,i) => `${i * 600 / Math.max(1,trend.length-1)},${110 - n * 100 / Math.max(1,...trend)}`).join(' ')} />
- </svg><p>This trend shows rolling-window fill counts, not price or market performance.</p>
  <h3>Instrument rankings (within each currency)</h3><select aria-label="Rank instruments" value={sort} onChange={e => setSort(e.target.value as typeof sort)}><option value="gross_notional">Gross value</option><option value="buy_notional">Top bought</option><option value="sell_notional">Top sold</option></select>
  <div className="card table-card"><table className="evidence-table"><thead><tr>{['Symbol','Currency','Buy demand qty','Sell demand qty','Buy fill qty','Sell fill qty','Buy value','Sell value'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map(r => <tr key={`${r.symbol}-${r.currency}`}><td>{r.symbol}</td><td>{r.currency}</td><td>{r.buy_order_qty}</td><td>{r.sell_order_qty}</td><td>{r.buy_fill_qty}</td><td>{r.sell_fill_qty}</td><td>{r.buy_notional}</td><td>{r.sell_notional}</td></tr>)}</tbody></table></div>
  <h3>Window comparisons</h3>{report.anomalies.length ? report.anomalies.map((a,i) => <p key={i}>{a.symbol} {a.side}: {a.previous} → {a.current} reported fill quantity.</p>) : <p>No threshold crossings.</p>}
