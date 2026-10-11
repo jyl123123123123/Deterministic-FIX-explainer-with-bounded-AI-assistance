@@ -197,3 +197,69 @@ def test_free_summary_requires_ai_enabled(monkeypatch):
 
     assert response.status_code == 503
     assert 'not enabled' in response.json()['detail']
+
+
+def test_chat_endpoint_prefers_openai_when_configured(monkeypatch):
+    import fix_explainer.api as api
+
+    monkeypatch.setenv('FIX_ENABLE_AI', '1')
+    monkeypatch.setenv('OPENAI_API_KEY', 'test-openai-key')
+    monkeypatch.setenv('OPENAI_MODEL', 'gpt-4o-mini')
+    monkeypatch.delenv('GEMINI_API_KEY', raising=False)
+    monkeypatch.delenv('GEMINI_MODEL', raising=False)
+    monkeypatch.setattr(api.chat_limiter, 'calls', 0)
+    monkeypatch.setattr(api.chat_limiter, 'last_call', None)
+
+    def fake_openai_transport(model, key, payload, timeout):
+        assert model == 'gpt-4o-mini'
+        roles = [m['role'] for m in payload['messages']]
+        assert roles == ['system', 'user', 'assistant', 'user']
+        assert payload['temperature'] == 0.7
+        assert payload['max_tokens'] == 1000
+        return 'OpenAI mock reply.'
+
+    def forbidden_gemini(*args, **kwargs):
+        raise AssertionError('Gemini transport must not be called when OpenAI is configured')
+
+    monkeypatch.setattr(api, 'openai_transport', fake_openai_transport)
+    monkeypatch.setattr(api, 'gemini_transport', forbidden_gemini)
+    response = client.post('/api/chat', json={'messages': [
+        {'role': 'user', 'text': 'Hello'},
+        {'role': 'model', 'text': 'Hi!'},
+        {'role': 'user', 'text': 'What is FIX?'},
+    ]})
+
+    assert response.status_code == 200
+    assert response.json() == {'reply': 'OpenAI mock reply.', 'provider': 'openai'}
+
+
+def test_chat_endpoint_openai_rate_limit_maps_to_429(monkeypatch):
+    import fix_explainer.api as api
+    from fix_explainer.ai import AITransportError
+
+    monkeypatch.setenv('FIX_ENABLE_AI', '1')
+    monkeypatch.setenv('OPENAI_API_KEY', 'test-openai-key')
+    monkeypatch.delenv('GEMINI_API_KEY', raising=False)
+    monkeypatch.delenv('GEMINI_MODEL', raising=False)
+    monkeypatch.setattr(api.chat_limiter, 'calls', 0)
+    monkeypatch.setattr(api.chat_limiter, 'last_call', None)
+
+    def rate_limited(model, key, payload, timeout):
+        raise AITransportError('OpenAI HTTP 429')
+
+    monkeypatch.setattr(api, 'openai_transport', rate_limited)
+    response = client.post('/api/chat', json={'messages': [{'role': 'user', 'text': 'hi'}]})
+
+    assert response.status_code == 429
+    assert 'rate limit' in response.json()['detail']
+
+
+def test_chat_endpoint_disabled_without_any_provider(monkeypatch):
+    monkeypatch.setenv('FIX_ENABLE_AI', '1')
+    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    monkeypatch.delenv('GEMINI_API_KEY', raising=False)
+    monkeypatch.delenv('GEMINI_MODEL', raising=False)
+    response = client.post('/api/chat', json={'messages': [{'role': 'user', 'text': 'hi'}]})
+
+    assert response.status_code == 503
+    assert 'not configured' in response.json()['detail']

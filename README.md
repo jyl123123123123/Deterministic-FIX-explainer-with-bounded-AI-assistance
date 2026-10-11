@@ -41,16 +41,25 @@ Local mode; it does not provide server validation or trading analytics. API erro
 and schema mismatches are shown rather than silently interpreted as connectivity
 failures.
 
-## Optional Gemini
+## Optional AI
 
 ```bash
 export FIX_ENABLE_AI=1
+export OPENAI_API_KEY=...            # OpenAI preferred
+export OPENAI_MODEL=gpt-4o-mini      # optional; this is the default
 .venv/bin/python examples/start_api.py
 ```
 
-The launcher prompts for a hidden key and model ID. Credentials remain in backend
-process memory. In Trading Flow, explicitly select **Gemini summary** to request
-one summary. No model calls are made by polling, replays, or template summaries.
+With `FIX_ENABLE_AI=1`, server-side AI features pick a provider from the
+environment: **OpenAI first** (`OPENAI_API_KEY`, model `OPENAI_MODEL`,
+default `gpt-4o-mini`), otherwise **Gemini** when `GEMINI_API_KEY` and
+`GEMINI_MODEL` are both set. With neither, AI endpoints return an explicit
+503 and no key is required.
+
+This powers the **Gemini Analyst** panel's free-form chat (`POST /api/chat`)
+and its natural-language trading-window summary
+(`POST /api/analytics/free-summary`), plus the bounded Gemini summary path.
+Credentials remain in backend process memory; browsers never hold a key.
 AI may incur provider charges; leave it disabled for a no-call demonstration.
 
 Gemini only selects/reorders approved facts with local citations. It never parses

@@ -1,7 +1,8 @@
-"""Local HTTP API for browser clients; Gemini credentials stay server-side."""
+"""Local HTTP API for browser clients; AI credentials stay server-side."""
 
 from pathlib import Path
 import asyncio
+import http.client
 import json
 import os
 import re
@@ -137,64 +138,134 @@ class ChatRateLimiter:
 
 chat_limiter = ChatRateLimiter()
 
+OPENAI_MAX_BYTES = 128 * 1024
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
-def _gemini_config() -> tuple[str, str]:
-    """Return (model, key) from the environment, or raise 503 if AI is off."""
+
+def openai_transport(model, api_key, payload, timeout):
+    """Fixed HTTPS host, key in Authorization header, no retries/logging.
+
+    Mirrors ai.gemini_transport: socket-level timeout, bounded response size,
+    and credential-free exceptions.
+    """
+    connection = http.client.HTTPSConnection("api.openai.com", timeout=timeout)
+    try:
+        connection.request(
+            "POST",
+            "/v1/chat/completions",
+            body=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        )
+        response = connection.getresponse()
+        if response.status != 200:
+            raise AITransportError(f"OpenAI HTTP {response.status}")
+        raw = response.read(OPENAI_MAX_BYTES + 1)
+        if len(raw) > OPENAI_MAX_BYTES:
+            raise AIOutputError("OpenAI response too large")
+        data = json.loads(raw)
+        choices = data.get("choices", [])
+        if len(choices) != 1:
+            raise AIOutputError("OpenAI response incomplete")
+        text = choices[0].get("message", {}).get("content", "")
+        if not isinstance(text, str) or not text.strip():
+            raise AIOutputError("OpenAI returned no answer")
+        return text
+    except (AIOutputError, AITransportError):
+        raise
+    except Exception:
+        # Never expose payload, key, or remote error body in exceptions.
+        raise AITransportError("OpenAI request failed") from None
+    finally:
+        connection.close()
+
+
+def _to_openai_messages(payload: dict) -> list[dict]:
+    """Convert a Gemini-style payload (systemInstruction + contents) to
+    OpenAI chat.completions messages (system + user/assistant)."""
+    messages: list[dict] = []
+    system_text = " ".join(
+        part.get("text", "") for part in payload.get("systemInstruction", {}).get("parts", [])
+    ).strip()
+    if system_text:
+        messages.append({"role": "system", "content": system_text})
+    for content in payload.get("contents", []):
+        role = "assistant" if content.get("role") == "model" else "user"
+        text = "".join(part.get("text", "") for part in content.get("parts", []))
+        messages.append({"role": role, "content": text})
+    return messages
+
+
+def _ai_config() -> tuple[str, str, str]:
+    """Return (provider, model, key); OpenAI preferred, Gemini as fallback."""
     if os.environ.get("FIX_ENABLE_AI") != "1":
         raise HTTPException(
             status_code=503,
-            detail="AI chat is not enabled on this server (set FIX_ENABLE_AI=1 with GEMINI_API_KEY and GEMINI_MODEL).",
+            detail="AI is not enabled on this server (set FIX_ENABLE_AI=1 with OPENAI_API_KEY, or GEMINI_API_KEY and GEMINI_MODEL).",
         )
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if openai_key.strip() and "\n" not in openai_key and "\r" not in openai_key:
+        model = os.environ.get("OPENAI_MODEL", "").strip() or DEFAULT_OPENAI_MODEL
+        return "openai", model, openai_key
     model = os.environ.get("GEMINI_MODEL", "")
     key = os.environ.get("GEMINI_API_KEY", "")
     if (
-        not isinstance(model, str)
-        or not re.fullmatch(r"gemini-[A-Za-z0-9._-]{1,100}", model)
-        or not key.strip()
-        or "\n" in key
-        or "\r" in key
+        isinstance(model, str)
+        and re.fullmatch(r"gemini-[A-Za-z0-9._-]{1,100}", model)
+        and key.strip()
+        and "\n" not in key
+        and "\r" not in key
     ):
-        raise HTTPException(status_code=503, detail="AI chat is not configured on this server.")
-    return model, key
+        return "gemini", model, key
+    raise HTTPException(status_code=503, detail="AI is not configured on this server.")
 
 
-def _gemini_generate(payload: dict) -> str:
-    """Rate-limited Gemini call with fixed, credential-free error mapping."""
+def _ai_generate(payload: dict) -> tuple[str, str]:
+    """Rate-limited AI call; returns (reply, provider). Payload is
+    Gemini-style; converted to OpenAI format when OpenAI is configured."""
+    provider, model, key = _ai_config()
     limited = chat_limiter.check()
     if limited == "AI_BUDGET_EXHAUSTED":
         raise HTTPException(status_code=429, detail="AI call budget exhausted for this server process.")
     if limited is not None:
         raise HTTPException(status_code=429, detail="AI rate limit: please retry in a few seconds.")
-    model, key = _gemini_config()
     try:
-        reply = gemini_transport(model, key, payload, CHAT_TIMEOUT_SECONDS)
+        if provider == "openai":
+            body = {
+                "model": model,
+                "messages": _to_openai_messages(payload),
+                "temperature": 0.7,
+                "max_tokens": 1000,
+            }
+            reply = openai_transport(model, key, body, CHAT_TIMEOUT_SECONDS)
+        else:
+            reply = gemini_transport(model, key, payload, CHAT_TIMEOUT_SECONDS)
     except AITransportError as error:
         match = re.search(r"HTTP (\d+)", str(error))
         upstream = int(match.group(1)) if match else None
         if upstream in (401, 403):
-            detail = "The server Gemini API key was rejected."
+            detail = "The server AI API key was rejected."
         elif upstream == 404:
-            detail = "The configured Gemini model is unavailable."
+            detail = "The configured AI model is unavailable."
         elif upstream == 429:
-            raise HTTPException(status_code=429, detail="Gemini rate limit reached; retry later.") from error
+            raise HTTPException(status_code=429, detail="AI provider rate limit reached; retry later.") from error
         else:
-            detail = "Gemini request failed."
+            detail = "AI request failed."
         raise HTTPException(status_code=502, detail=detail) from error
     except AIOutputError as error:
-        raise HTTPException(status_code=502, detail="Gemini returned an unusable reply.") from error
+        raise HTTPException(status_code=502, detail="AI returned an unusable reply.") from error
     if not reply.strip():
-        raise HTTPException(status_code=502, detail="Gemini returned an empty reply.")
-    return reply
+        raise HTTPException(status_code=502, detail="AI returned an empty reply.")
+    return reply, provider
 
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest) -> ChatResponse:
-    """Server-side Gemini chat; the browser never sees credentials."""
-    _gemini_config()
+    """Server-side AI chat; the browser never sees credentials."""
+    _ai_config()
     if sum(len(m.text) for m in request.messages) > CHAT_MAX_TOTAL_CHARS:
         raise HTTPException(status_code=400, detail="Conversation is too long (64 KiB total).")
 
-    # Normalize for Gemini multi-turn: drop leading model messages and merge
+    # Normalize for multi-turn APIs: drop leading model messages and merge
     # consecutive same-role messages.
     contents: list[dict] = []
     for message in request.messages:
@@ -211,7 +282,8 @@ def chat(request: ChatRequest) -> ChatResponse:
         "systemInstruction": {"parts": [{"text": CHAT_SYSTEM_INSTRUCTION}]},
         "contents": contents,
     }
-    return ChatResponse(reply=_gemini_generate(payload), provider="gemini")
+    reply, provider = _ai_generate(payload)
+    return ChatResponse(reply=reply, provider=provider)
 
 
 FREE_SUMMARY_INSTRUCTION = (
@@ -276,7 +348,8 @@ def analytics_free_summary(window_seconds: int = Query(default=300, ge=1, le=864
         "systemInstruction": {"parts": [{"text": FREE_SUMMARY_INSTRUCTION}]},
         "contents": [{"role": "user", "parts": [{"text": f"Trading-flow statistics JSON:\n{stats}"}]}],
     }
-    return ChatResponse(reply=_gemini_generate(payload), provider="gemini")
+    reply, provider = _ai_generate(payload)
+    return ChatResponse(reply=reply, provider=provider)
 
 
 @app.get("/api/analytics/snapshot")

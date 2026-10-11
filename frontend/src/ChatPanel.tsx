@@ -215,8 +215,8 @@ export default function ChatPanel() {
               </div>
               <div className="summary-body">{m.text}</div>
               <div className="chat-summary-meta">
-                {m.provider === 'gemini' && (
-                  <span className="badge badge-ok">Provider: gemini</span>
+                {m.provider && m.provider !== 'none' && (
+                  <span className="badge badge-ok">Provider: {m.provider}</span>
                 )}
                 {m.provider === 'none' && (
                   <span className="badge badge-neutral">No AI needed</span>
