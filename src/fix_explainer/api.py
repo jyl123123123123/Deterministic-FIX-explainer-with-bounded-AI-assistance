@@ -217,11 +217,12 @@ def chat(request: ChatRequest) -> ChatResponse:
 FREE_SUMMARY_INSTRUCTION = (
     "You are an analyst for a FIX trading-flow dashboard. Given these "
     "statistics (simulated data), write a natural, concise summary in "
-    "Simplified Chinese: which companies dominate, buy/sell volumes and "
+    "English: which companies dominate, buy/sell volumes and "
     "notional, the rough sector/industry of each symbol based on your "
-    "knowledge (e.g. AAPL=科技/消费电子), and any notable imbalances or "
-    "anomalies. 3-6 short paragraphs or bullet points. Plain text, no "
-    "citations, no markdown tables. State that the data is simulated."
+    "knowledge (e.g. AAPL = tech/consumer electronics), and any notable "
+    "imbalances or anomalies. 3-6 short paragraphs or bullet points. "
+    "Plain text, no citations, no markdown tables. State that the data "
+    "is simulated."
 )
 
 _SYMBOL_STAT_KEYS = (
@@ -263,11 +264,11 @@ def _compact_report(report: dict) -> dict:
 
 @app.post("/api/analytics/free-summary", response_model=ChatResponse)
 def analytics_free_summary(window_seconds: int = Query(default=300, ge=1, le=86400)) -> ChatResponse:
-    """Natural-language Chinese summary of the current window via Gemini."""
+    """Natural-language English summary of the current window via Gemini."""
     report = analytics.snapshot(window_seconds)
     if not report.get("total_executions") and not report.get("symbols"):
         return ChatResponse(
-            reply="当前统计窗口内没有数据。请先在 Trading Flow 页启动一次回放。",
+            reply="No data in the current statistics window. Start a replay on the Trading Flow page first.",
             provider="none",
         )
     stats = json.dumps(_compact_report(report), ensure_ascii=False)
