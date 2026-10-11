@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { parseFixMessage, type ParseResult } from './fix/parser';
-import { buildExplanation, type Explanation } from './fix/explainer';
 import { SAMPLES } from './fix/samples';
 import { explainViaApi, ApiError, type ExplainResponse } from './api';
 import { buildNewOrderSingle, toDisplay } from './fix/builder';
@@ -103,7 +102,6 @@ export default function App() {
   const [mode, setMode] = useState<Mode | null>(null);
   const [view, setView] = useState<ViewModel | null>(null);
   const [backend, setBackend] = useState<ExplainResponse | null>(null);
-  const [localExplanation, setLocalExplanation] = useState<Explanation | null>(null);
   const [error, setError] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
   const [builder, setBuilder] = useState<BuilderState>({
@@ -122,7 +120,6 @@ export default function App() {
   const clearResults = () => {
     setView(null);
     setBackend(null);
-    setLocalExplanation(null);
     setMode(null);
   };
 
@@ -140,7 +137,6 @@ export default function App() {
       if (requestId !== requestIdRef.current) return; // stale response, input moved on
       setBackend(res);
       setView(viewFromBackend(res));
-      setLocalExplanation(null);
       setMode('backend');
       setError('');
     } catch (e) {
@@ -154,7 +150,6 @@ export default function App() {
         try {
           const parsed = parseFixMessage(message);
           setView(viewFromLocal(parsed));
-          setLocalExplanation(buildExplanation(parsed));
           setBackend(null);
           setMode('local');
           setError('');
@@ -400,25 +395,7 @@ export default function App() {
               </section>
 
               {mode === 'backend' && backend && (
-                <>
-                  <section>
-                    <h2 className="section-title">Explanation</h2>
-                    <div className="card explanation-card">
-                      <p className="explanation-text provider-summary">{backend.provider_summary}</p>
-                      {backend.deterministic.unknowns.length > 0 && (
-                        <>
-                          <h3>Limits</h3>
-                          <ul className="disclaimer-list">
-                            {backend.deterministic.unknowns.map((u) => (
-                              <li key={u}>{u}</li>
-                            ))}
-                          </ul>
-                        </>
-                      )}
-                    </div>
-                  </section>
-
-                  <section>
+                <section>
                     <h2 className="section-title">
                       Findings{' '}
                       <span className="delimiter-note">
@@ -456,30 +433,6 @@ export default function App() {
                       )}
                     </div>
                   </section>
-                </>
-              )}
-
-              {mode === 'local' && localExplanation && (
-                <section>
-                  <h2 className="section-title">Explanation</h2>
-                  <div className="card explanation-card">
-                    <p className="explanation-text">{localExplanation.paragraph}</p>
-                    <h3>Evidence</h3>
-                    <ul className="evidence-list">
-                      {localExplanation.evidence.map((e) => (
-                        <li key={e} className="mono">
-                          {e}
-                        </li>
-                      ))}
-                    </ul>
-                    <h3>Disclaimer</h3>
-                    <ul className="disclaimer-list">
-                      {localExplanation.disclaimers.map((d) => (
-                        <li key={d}>{d}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </section>
               )}
             </>
           )}
